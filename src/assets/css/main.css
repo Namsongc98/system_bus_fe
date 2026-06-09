@@ -1,0 +1,64 @@
+@import 'tailwindcss';
+@import '@nuxt/ui';
+
+/* ─── Global reset ───────────────────────────────────────────────────────────── */
+html,
+body {
+  width: 100%;
+  overflow-x: hidden;
+}
+
+#app {
+  min-height: 100dvh;
+  width: 100%;
+  overflow-x: hidden;
+}
+
+/* ─── BaseModal ──────────────────────────────────────────────────────────────── */
+.base-modal__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.base-modal__panel {
+  position: relative;
+  width: 100%;
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  background-color: #ffffff;
+  border-radius: 1rem;
+  box-shadow: 0 25px 50px -12px rgba(27, 27, 28, 0.25);
+}
+
+.base-modal__panel--sm {
+  max-width: 24rem;
+}
+.base-modal__panel--md {
+  max-width: 32rem;
+}
+.base-modal__panel--lg {
+  max-width: 48rem;
+}
+.base-modal__panel--xl {
+  max-width: 64rem;
+}
+
+/* Transition */
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+  transform: scale(0.96);
+}
