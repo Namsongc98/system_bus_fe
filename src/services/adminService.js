@@ -2,13 +2,12 @@ import apiClient from './axios'
 import { API_ENDPOINTS } from '@/constants/api_endpoint'
 
 export const adminService = {
-  getDashboard() {
-    return apiClient.get(API_ENDPOINTS.ADMIN.DASHBOARD)
+  async getDashboard() {
+    const response = await apiClient.get(API_ENDPOINTS.ADMIN.DASHBOARD)
+    return response.data
   },
-  getStats() {
-    return apiClient.get(API_ENDPOINTS.ADMIN.STATS)
-  },
-  getRevenue(params) {
-    return apiClient.get(API_ENDPOINTS.ADMIN.REVENUE, { params })
+  async getRevenue(params) {
+    const response = await apiClient.get(API_ENDPOINTS.ADMIN.REVENUE, { params })
+    return response.data
   },
 }

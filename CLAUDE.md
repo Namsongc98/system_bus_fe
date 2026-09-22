@@ -1,7 +1,7 @@
-# Frontend Codex Instructions
+# Frontend Claude Instructions
 
-Use this file for frontend tasks in `booking_ticket_vue/`. Shared Codex assets
-live in the repository root `.codex/`; do not recreate a nested project `.codex`
+Use this file for frontend tasks in `booking_ticket_vue/`. Shared Claude assets
+live in the repository root `.claude/`; do not create a nested project `.claude`
 folder.
 
 ## Project Structure
@@ -20,19 +20,19 @@ wrappers in `src/services`, shared helpers in `src/utils`, constants in
 
 Before editing frontend code, read the relevant files in this order:
 
-1. `../AGENTS.md`
-2. `../.codex/references/frontend/frontend-instructions.md`
+1. `../CLAUDE.md`
+2. `../.claude/references/frontend/frontend-instructions.md`
 3. The specific frontend rule files for the task area:
-   - `../.codex/references/frontend/rules/clean-code.md`
-   - `../.codex/references/frontend/rules/rule-component.md`
-   - `../.codex/references/frontend/rules/api-service-rules.md`
-   - `../.codex/references/frontend/rules/figma-style-rules.md`
-4. The relevant skill under `../.codex/skills/` when the request matches a
+   - `../.claude/references/frontend/rules/clean-code.md`
+   - `../.claude/references/frontend/rules/rule-component.md`
+   - `../.claude/references/frontend/rules/api-service-rules.md`
+   - `../.claude/references/frontend/rules/figma-style-rules.md`
+4. The relevant skill under `../.claude/skills/` when the request matches a
    specialized workflow.
 5. The closest existing source files in the target area.
 
-Detailed legacy reference material is preserved in
-`../.codex/references/frontend/`. Load only the reference file needed for the
+Detailed reference material lives in `../.claude/references/frontend/`
+(see its `README.md` for the index). Load only the reference file needed for the
 current task.
 
 ## Architecture Rules

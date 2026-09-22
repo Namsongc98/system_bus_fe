@@ -2,89 +2,54 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { adminService } from '@/services/adminService'
 
-function getPayload(response) {
-  return response?.data?.data ?? response?.data ?? null
-}
-
-function getCollection(payload) {
-  if (Array.isArray(payload)) return payload
-  if (Array.isArray(payload?.content)) return payload.content
-  if (Array.isArray(payload?.items)) return payload.items
-  if (Array.isArray(payload?.data)) return payload.data
-  if (Array.isArray(payload?.revenue)) return payload.revenue
-  return []
-}
-
 export const useAdminStore = defineStore('admin', () => {
-  const dashboardStats = ref(null)
-  const revenueData = ref([])
-  const loading = ref(false)
-  const error = ref(null)
-  const pendingRequests = ref(0)
+  const dashboard = ref(null)
+  const revenueTrend = ref([])
+  const dashboardLoading = ref(false)
+  const revenueLoading = ref(false)
+  const dashboardError = ref(null)
+  const revenueError = ref(null)
 
-  function beginRequest() {
-    pendingRequests.value += 1
-    loading.value = true
-    error.value = null
-  }
-
-  function finishRequest() {
-    pendingRequests.value = Math.max(0, pendingRequests.value - 1)
-    loading.value = pendingRequests.value > 0
-  }
-
-  function setRequestError(err) {
-    error.value = err?.response?.data?.message || err?.message || 'Unable to load dashboard data'
-  }
-
-  async function fetchDashboard(params) {
-    beginRequest()
+  async function fetchDashboard() {
+    dashboardLoading.value = true
+    dashboardError.value = null
     try {
-      const response = await adminService.getDashboard(params)
-      dashboardStats.value = getPayload(response)
-      return dashboardStats.value
+      const response = await adminService.getDashboard()
+      dashboard.value = response?.data ?? null
+      return dashboard.value
     } catch (err) {
-      setRequestError(err)
-      dashboardStats.value = null
-      return null
+      dashboardError.value = err?.message || 'Unable to load dashboard data'
+      dashboard.value = null
+      throw err
     } finally {
-      finishRequest()
+      dashboardLoading.value = false
     }
   }
 
   async function fetchRevenue(params) {
-    beginRequest()
+    revenueLoading.value = true
+    revenueError.value = null
     try {
       const response = await adminService.getRevenue(params)
-      const payload = getPayload(response)
-      revenueData.value = getCollection(payload)
-      return revenueData.value
+      revenueTrend.value = Array.isArray(response?.data) ? response.data : []
+      return revenueTrend.value
     } catch (err) {
-      setRequestError(err)
-      revenueData.value = []
-      return []
+      revenueError.value = err?.message || 'Unable to load revenue trend'
+      revenueTrend.value = []
+      throw err
     } finally {
-      finishRequest()
+      revenueLoading.value = false
     }
   }
 
-  async function fetchStats() {
-    beginRequest()
-    try {
-      const response = await adminService.getStats()
-      const payload = getPayload(response)
-      dashboardStats.value = {
-        ...(dashboardStats.value || {}),
-        ...(payload || {}),
-      }
-      return dashboardStats.value
-    } catch (err) {
-      setRequestError(err)
-      return null
-    } finally {
-      finishRequest()
-    }
+  return {
+    dashboard,
+    revenueTrend,
+    dashboardLoading,
+    revenueLoading,
+    dashboardError,
+    revenueError,
+    fetchDashboard,
+    fetchRevenue,
   }
-
-  return { dashboardStats, revenueData, loading, error, fetchDashboard, fetchRevenue, fetchStats }
 })

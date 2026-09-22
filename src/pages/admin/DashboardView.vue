@@ -8,109 +8,93 @@ import BaseEmptyState from '@/components/elements/BaseEmptyState.vue'
 import BaseTrendChart from '@/components/elements/BaseTrendChart.vue'
 import {
   DASHBOARD_CUSTOMER_COLUMNS,
-  DASHBOARD_FALLBACK_KPIS,
-  DASHBOARD_FALLBACK_LIVE_BOOKINGS,
-  DASHBOARD_FALLBACK_LOYAL_CUSTOMERS,
-  DASHBOARD_FALLBACK_REVENUE_TREND,
-  DASHBOARD_FALLBACK_TOP_ROUTES,
+  DASHBOARD_KPIS,
   DASHBOARD_REVENUE_PERIOD_TABS,
 } from '@/constants/admin/dashboard'
 import { ROUTE_NAMES } from '@/constants/routes'
 import { useAdminStore } from '@/stores/admin'
-import groupBookingIcon from '@/assets/icons/GroupBookingIcon.svg'
-import moneyIcon from '@/assets/icons/MoneyIcon.svg'
-import preOrderIcon from '@/assets/icons/Pre-OrderIcon.svg'
 import ticketIcon from '@/assets/icons/TicketIcon.svg'
 
 const adminStore = useAdminStore()
 const router = useRouter()
-const { dashboardStats, revenueData, loading, error } = storeToRefs(adminStore)
+const {
+  dashboard,
+  revenueTrend,
+  dashboardLoading,
+  revenueLoading,
+  dashboardError,
+  revenueError,
+} = storeToRefs(adminStore)
 const selectedRevenuePeriod = ref('monthly')
 
-const liveBookingIcons = {
-  groupBooking: groupBookingIcon,
-  money: moneyIcon,
-  preOrder: preOrderIcon,
-  ticket: ticketIcon,
-}
-
-const dashboard = computed(() => dashboardStats.value || {})
-
-function firstDefined(...values) {
-  return values.find((value) => value !== undefined && value !== null && value !== '')
-}
-
 function formatNumber(value) {
-  if (typeof value === 'number') return new Intl.NumberFormat('en-US').format(value)
-  return value
+  return new Intl.NumberFormat('en-US').format(Number(value || 0))
 }
 
 function formatCurrency(value) {
-  if (typeof value === 'number') {
-    return new Intl.NumberFormat('vi-VN', {
-      style: 'currency',
-      currency: 'VND',
-      maximumFractionDigits: 0,
-    }).format(value)
-  }
-  return value
+  return new Intl.NumberFormat('vi-VN', {
+    style: 'currency',
+    currency: 'VND',
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0))
 }
 
-const kpiCards = computed(() =>
-  DASHBOARD_FALLBACK_KPIS.map((card) => {
-    const stats = dashboard.value
-    const valueMap = {
-      revenue: formatCurrency(firstDefined(stats.totalRevenue, stats.revenue, stats.income)),
-      trips: formatNumber(firstDefined(stats.tripsCompleted, stats.completedTrips, stats.trips)),
-      tickets: formatNumber(firstDefined(stats.ticketsSold, stats.tickets, stats.totalTickets)),
-      customers: formatNumber(firstDefined(stats.activeCustomers, stats.customers, stats.users)),
-    }
-    const trendMap = {
-      revenue: firstDefined(stats.revenueTrend, stats.revenueGrowth),
-      trips: firstDefined(stats.tripsTrend, stats.tripsGrowth),
-      tickets: firstDefined(stats.ticketsTrend, stats.ticketsGrowth),
-      customers: firstDefined(stats.customersTrend, stats.customerGrowth),
-    }
+function formatTrend(value) {
+  if (value === null || value === undefined) return 'N/A'
+  const number = Number(value)
+  return `${number > 0 ? '+' : ''}${number.toFixed(1)}%`
+}
 
+const kpiCards = computed(() => {
+  const kpis = dashboard.value?.kpis || {}
+  return DASHBOARD_KPIS.map((card) => {
+    const rawValue = kpis[card.valueKey]
+    const trend = kpis[card.trendKey]
     return {
       ...card,
-      value: firstDefined(valueMap[card.key], card.value),
-      trend: firstDefined(trendMap[card.key], card.trend),
+      value: card.format === 'currency' ? formatCurrency(rawValue) : formatNumber(rawValue),
+      trend: formatTrend(trend),
+      trendValue: trend,
     }
   })
-)
+})
 
-const revenueTrend = computed(() => {
-  if (!revenueData.value.length) return DASHBOARD_FALLBACK_REVENUE_TREND
-
+const revenueChartItems = computed(() => {
   const heightClasses = ['h-20', 'h-28', 'h-24', 'h-36', 'h-32', 'h-44']
-  return revenueData.value.slice(0, 6).map((item, index) => ({
-    label: firstDefined(
-      item.label,
-      item.month,
-      item.period,
-      DASHBOARD_FALLBACK_REVENUE_TREND[index]?.label
-    ),
-    value: firstDefined(
-      item.value,
-      item.revenue,
-      item.amount,
-      DASHBOARD_FALLBACK_REVENUE_TREND[index]?.value
-    ),
+  return revenueTrend.value.map((item, index) => ({
+    label: item.label,
+    value: Number(item.amount || 0),
     heightClass: heightClasses[index] || 'h-24',
   }))
 })
 
-const topRoutes = computed(() => dashboard.value.topRoutes || DASHBOARD_FALLBACK_TOP_ROUTES)
-const loyalCustomers = computed(
-  () => dashboard.value.loyalCustomers || DASHBOARD_FALLBACK_LOYAL_CUSTOMERS
-)
-const liveBookings = computed(() =>
-  (dashboard.value.liveBookings || DASHBOARD_FALLBACK_LIVE_BOOKINGS).map((booking) => ({
-    ...booking,
-    img: booking.img || liveBookingIcons[booking.iconKey] || ticketIcon,
+const topRoutes = computed(() => dashboard.value?.topRoutes || [])
+const loyalCustomers = computed(() =>
+  (dashboard.value?.loyalCustomers || []).map((customer) => ({
+    ...customer,
+    id: customer.customerId,
+    totalSpent: formatCurrency(customer.totalSpent),
   }))
 )
+const recentBookings = computed(() =>
+  (dashboard.value?.recentBookings || []).map((booking) => ({
+    id: booking.ticketId,
+    title: `Ticket #${booking.ticketId} sold`,
+    description: `${booking.customer || 'Unknown customer'} • ${booking.routeName}${
+      booking.seatNumber ? ` • Seat ${booking.seatNumber}` : ''
+    }`,
+    time: formatRelativeTime(booking.occurredAt),
+  }))
+)
+
+function formatRelativeTime(value) {
+  if (!value) return ''
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000))
+  if (elapsedSeconds < 60) return 'Just now'
+  if (elapsedSeconds < 3600) return `${Math.floor(elapsedSeconds / 60)}m ago`
+  if (elapsedSeconds < 86400) return `${Math.floor(elapsedSeconds / 3600)}h ago`
+  return `${Math.floor(elapsedSeconds / 86400)}d ago`
+}
 
 function goToNewBooking() {
   router.push({ name: ROUTE_NAMES.ADMIN_TICKETS })
@@ -124,7 +108,6 @@ function handleRevenuePeriodChange(period) {
 onMounted(() => {
   Promise.allSettled([
     adminStore.fetchDashboard(),
-    adminStore.fetchStats(),
     adminStore.fetchRevenue({ period: selectedRevenuePeriod.value }),
   ])
 })
@@ -136,7 +119,7 @@ onMounted(() => {
       <div class="flex flex-col gap-1">
         <h1 class="text-4xl leading-10 font-extrabold text-sky-700">Dashboard</h1>
         <p class="text-base leading-6 text-gray-700">
-          Real-time insight into Fluid Voyager operations.
+          Current insight into Fluid Voyager operations.
         </p>
       </div>
 
@@ -155,15 +138,15 @@ onMounted(() => {
     </section>
 
     <div
-      v-if="error"
+      v-if="dashboardError"
       class="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-medium text-amber-800"
       role="alert"
     >
-      {{ error }}. Showing review data while the dashboard API is unavailable.
+      {{ dashboardError }}
     </div>
 
     <div
-      v-if="loading"
+      v-if="dashboardLoading"
       class="rounded-2xl bg-white/70 px-5 py-3 text-sm font-semibold text-sky-700 shadow-sm backdrop-blur-md"
     >
       Loading dashboard data...
@@ -184,12 +167,22 @@ onMounted(() => {
           <span
             class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs leading-4"
             :class="
-              card.positive ? 'bg-emerald-500/20 text-emerald-800' : 'bg-rose-200/30 text-red-700'
+              card.trendValue === null || card.trendValue === undefined
+                ? 'bg-slate-200 text-slate-700'
+                : Number(card.trendValue) >= 0
+                  ? 'bg-emerald-500/20 text-emerald-800'
+                  : 'bg-rose-200/30 text-red-700'
             "
           >
             <span
               class="h-1.5 w-3 rounded-full"
-              :class="card.positive ? 'bg-emerald-800' : 'bg-red-700'"
+              :class="
+                card.trendValue === null || card.trendValue === undefined
+                  ? 'bg-slate-500'
+                  : Number(card.trendValue) >= 0
+                    ? 'bg-emerald-800'
+                    : 'bg-red-700'
+              "
             ></span>
             {{ card.trend }}
           </span>
@@ -214,13 +207,14 @@ onMounted(() => {
         v-model="selectedRevenuePeriod"
         title="Revenue Trend"
         description="Monthly breakdown of income performance"
-        :items="revenueTrend"
+        :items="revenueChartItems"
         :tabs="DASHBOARD_REVENUE_PERIOD_TABS"
-        :loading="loading"
+        :loading="revenueLoading"
         empty-title="No revenue data"
         empty-description="Revenue performance will appear when report data is available."
         @update:model-value="handleRevenuePeriodChange"
       />
+      <p v-if="revenueError" class="sr-only" role="alert">{{ revenueError }}</p>
 
       <article
         class="flex flex-col gap-10 rounded-[32px] bg-white/70 px-6 pt-8 pb-10 shadow-sm backdrop-blur-md md:px-8"
@@ -230,19 +224,27 @@ onMounted(() => {
           <p class="text-xs leading-4 text-gray-700">Performance by destination volume</p>
         </div>
 
-        <div class="flex flex-col gap-6">
+        <div v-if="topRoutes.length" class="flex flex-col gap-6">
           <div v-for="route in topRoutes" :key="route.id || route.name" class="flex flex-col gap-2">
             <div class="flex justify-between gap-4">
               <p class="text-xs leading-4 font-bold text-zinc-900">{{ route.name }}</p>
               <p class="text-xs leading-4 font-bold whitespace-nowrap text-gray-700">
-                {{ route.tickets }}
+                {{ formatNumber(route.ticketsSold) }} tickets
               </p>
             </div>
             <div class="h-2 overflow-hidden rounded-full bg-stone-200">
-              <div class="h-2 rounded-full" :class="[route.widthClass, route.colorClass]"></div>
+              <div
+                class="h-2 rounded-full bg-sky-700"
+                :style="{ width: `${Math.min(100, Number(route.sharePercent || 0))}%` }"
+              ></div>
             </div>
           </div>
         </div>
+        <BaseEmptyState
+          v-else
+          title="No route performance"
+          description="Successful ticket sales for this month will appear here."
+        />
       </article>
     </section>
 
@@ -269,12 +271,9 @@ onMounted(() => {
           <template #cell-totalSpent="{ value }">
             <span class="font-bold text-zinc-900">{{ value }}</span>
           </template>
-          <template #cell-status="{ row }">
-            <span
-              class="inline-flex rounded-md px-2 text-[10px] leading-5 font-bold"
-              :class="row.statusClass"
-            >
-              {{ row.status }}
+          <template #cell-rank="{ value }">
+            <span class="inline-flex rounded-md bg-sky-100 px-2 text-[10px] leading-5 font-bold">
+              #{{ value }}
             </span>
           </template>
         </BaseDataTable>
@@ -282,7 +281,7 @@ onMounted(() => {
 
       <article class="flex flex-col gap-6 rounded-[32px] bg-stone-100 p-6 md:p-8">
         <div class="flex items-center justify-between gap-4">
-          <h2 class="text-lg leading-7 font-bold text-zinc-900">Live Stream Bookings</h2>
+          <h2 class="text-lg leading-7 font-bold text-zinc-900">Recent Bookings</h2>
           <div class="flex items-center gap-2">
             <span class="relative flex size-2">
               <span
@@ -290,22 +289,21 @@ onMounted(() => {
               ></span>
               <span class="relative inline-flex size-2 rounded-full bg-emerald-800"></span>
             </span>
-            <span class="text-xs leading-4 font-bold text-emerald-800">LIVE PULSE</span>
+            <span class="text-xs leading-4 font-bold text-emerald-800">LATEST ACTIVITY</span>
           </div>
         </div>
 
-        <div v-if="liveBookings.length" class="flex flex-col gap-4">
+        <div v-if="recentBookings.length" class="flex flex-col gap-4">
           <div
-            v-for="booking in liveBookings"
+            v-for="booking in recentBookings"
             :key="booking.id || booking.title"
             class="flex items-center justify-between gap-4 rounded-[32px] bg-white/60 p-4 outline outline-1 outline-white/20"
           >
             <div class="flex min-w-0 items-center gap-4">
               <div
-                class="flex size-8 shrink-0 items-center justify-center rounded-full"
-                :class="booking.toneClass"
+                class="flex size-8 shrink-0 items-center justify-center rounded-full bg-sky-700/10 text-sky-700"
               >
-                <img :src="booking.img" alt="Booking Icon" class="size-4" />
+                <img :src="ticketIcon" alt="" class="size-4" />
               </div>
               <div class="min-w-0">
                 <p class="truncate text-sm leading-5 font-bold text-zinc-900">
@@ -321,7 +319,7 @@ onMounted(() => {
         </div>
         <BaseEmptyState
           v-else
-          title="No live bookings"
+          title="No recent bookings"
           description="Recent booking activity will appear here."
         />
       </article>
