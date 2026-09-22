@@ -16,10 +16,52 @@ vi.mock('vue-router', () => ({
 vi.mock('@/services/adminService', () => ({
   adminService: {
     getDashboard: vi.fn(),
-    getStats: vi.fn(),
     getRevenue: vi.fn(),
   },
 }))
+
+const dashboardPayload = {
+  data: {
+    period: { startDate: '2026-06-01', endDate: '2026-06-30' },
+    kpis: {
+      totalRevenue: 125500000,
+      revenueTrendPercent: 12.5,
+      tripsCompleted: 342,
+      tripsTrendPercent: 8.4,
+      ticketsSold: 8450,
+      ticketsTrendPercent: -2.1,
+      activeCustomers: 1245,
+      customersTrendPercent: null,
+    },
+    topRoutes: [
+      {
+        routeId: 1,
+        name: 'Hanoi - Da Nang',
+        ticketsSold: 2420,
+        sharePercent: 88,
+      },
+    ],
+    loyalCustomers: [
+      {
+        customerId: 1,
+        customer: 'Nguyen Van A',
+        trips: 24,
+        totalSpent: 18200000,
+        rank: 1,
+      },
+    ],
+    recentBookings: [
+      {
+        ticketId: 2849,
+        customer: 'Pham Minh D',
+        routeName: 'Hanoi - Da Nang',
+        seatNumber: 12,
+        amount: 450000,
+        occurredAt: new Date(Date.now() - 120000).toISOString(),
+      },
+    ],
+  },
+}
 
 function mountPage() {
   return mount(DashboardView, {
@@ -41,34 +83,68 @@ describe('DashboardView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
-    adminService.getDashboard.mockResolvedValue({ data: { data: {} } })
-    adminService.getStats.mockResolvedValue({ data: { data: {} } })
-    adminService.getRevenue.mockResolvedValue({ data: { data: [] } })
+    adminService.getDashboard.mockResolvedValue(dashboardPayload)
+    adminService.getRevenue.mockResolvedValue({
+      data: [
+        { label: 'JAN', startDate: '2026-01-01', endDate: '2026-01-31', amount: 1000 },
+      ],
+    })
   })
 
-  it('renders fallback KPI cards when API data is empty', async () => {
+  it('loads the overview and monthly revenue without a stats request', async () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('₫125.5M')
-    expect(wrapper.text()).toContain('342')
-    expect(wrapper.text()).toContain('8,450')
-    expect(wrapper.text()).toContain('1,245')
+    expect(adminService.getDashboard).toHaveBeenCalledOnce()
+    expect(adminService.getRevenue).toHaveBeenCalledWith({ period: 'monthly' })
+    expect(Object.keys(adminService)).not.toContain('getStats')
+    expect(wrapper.text()).toContain('125.500.000')
+    expect(wrapper.text()).toContain('+12.5%')
+    expect(wrapper.text()).toContain('-2.1%')
+    expect(wrapper.text()).toContain('N/A')
   })
 
-  it('renders the fallback revenue trend chart', async () => {
+  it('renders API route, customer rank, and recent booking data', async () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Revenue Trend')
-    expect(wrapper.text()).toContain('JAN')
-    expect(wrapper.text()).toContain('JUN')
+    expect(wrapper.text()).toContain('Hanoi - Da Nang')
+    expect(wrapper.text()).toContain('2,420 tickets')
+    expect(wrapper.find('[style="width: 88%;"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Nguyen Van A')
+    expect(wrapper.text()).toContain('#1')
+    expect(wrapper.text()).toContain('Ticket #2849 sold')
+    expect(wrapper.text()).toContain('2m ago')
   })
 
-  it('renders loading state while dashboard requests are pending', async () => {
+  it('renders empty states without fallback business data', async () => {
+    adminService.getDashboard.mockResolvedValue({
+      data: {
+        kpis: {
+          totalRevenue: 0,
+          tripsCompleted: 0,
+          ticketsSold: 0,
+          activeCustomers: 0,
+        },
+        topRoutes: [],
+        loyalCustomers: [],
+        recentBookings: [],
+      },
+    })
+    adminService.getRevenue.mockResolvedValue({ data: [] })
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('No revenue data')
+    expect(wrapper.text()).toContain('No route performance')
+    expect(wrapper.text()).toContain('No loyal customers yet')
+    expect(wrapper.text()).toContain('No recent bookings')
+    expect(wrapper.text()).not.toContain('PLATINUM')
+  })
+
+  it('renders overview loading independently', async () => {
     adminService.getDashboard.mockReturnValue(new Promise(() => {}))
-    adminService.getStats.mockReturnValue(new Promise(() => {}))
-    adminService.getRevenue.mockReturnValue(new Promise(() => {}))
 
     const wrapper = mountPage()
     await nextTick()
@@ -76,24 +152,15 @@ describe('DashboardView', () => {
     expect(wrapper.text()).toContain('Loading dashboard data...')
   })
 
-  it('renders an error banner while keeping fallback UI visible', async () => {
-    adminService.getDashboard.mockRejectedValueOnce(new Error('Dashboard unavailable'))
+  it('keeps overview data visible when revenue loading fails', async () => {
+    adminService.getRevenue.mockRejectedValue(new Error('Revenue unavailable'))
 
     const wrapper = mountPage()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Dashboard unavailable')
-    expect(wrapper.text()).toContain('Showing review data')
-    expect(wrapper.text()).toContain('Loyal Voyagers')
-  })
-
-  it('routes New Booking to admin tickets', async () => {
-    const wrapper = mountPage()
-    await flushPromises()
-
-    await wrapper.get('[data-testid="new-booking-button"]').trigger('click')
-
-    expect(push).toHaveBeenCalledWith({ name: ROUTE_NAMES.ADMIN_TICKETS })
+    expect(wrapper.text()).toContain('125.500.000')
+    expect(wrapper.text()).toContain('No revenue data')
+    expect(wrapper.get('[role="alert"]').text()).toContain('Revenue unavailable')
   })
 
   it('refetches revenue when chart period changes', async () => {
@@ -110,13 +177,12 @@ describe('DashboardView', () => {
     expect(adminService.getRevenue).toHaveBeenCalledWith({ period: 'weekly' })
   })
 
-  it('renders loyal customers and live bookings from fallback data', async () => {
+  it('routes New Booking to admin tickets', async () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Nguyen Van A')
-    expect(wrapper.text()).toContain('PLATINUM')
-    expect(wrapper.text()).toContain('Ticket #FV-2849 Sold')
-    expect(wrapper.text()).toContain('LIVE PULSE')
+    await wrapper.get('[data-testid="new-booking-button"]').trigger('click')
+
+    expect(push).toHaveBeenCalledWith({ name: ROUTE_NAMES.ADMIN_TICKETS })
   })
 })

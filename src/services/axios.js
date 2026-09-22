@@ -3,7 +3,7 @@ import { LOCAL_STORAGE_KEYS } from '@/constants'
 import { getStorage, removeStorage } from '@/utils/storage'
 import router from '@/router'
 import { ROUTE_NAMES } from '@/constants/routes'
-import { API_BASE_URL_SYSTEM, API_BASE_URL_BOOKING } from '@/constants/api_endpoint'
+import { API_BASE_URL_SYSTEM } from '@/constants/api_endpoint'
 
 // ─── Shared factory ───────────────────────────────────────────────────────────
 function createClient(baseURL) {
@@ -44,10 +44,8 @@ function createClient(baseURL) {
   return client
 }
 
-// ─── Manage Revenue Service — http://localhost:8082 ──────────────────────────
+// ─── Single client — every service is reached through Kong (API_BASE_URL_SYSTEM) ──
+// Kong routes /api/booking -> booking service and /api/* -> manage-revenue service.
 const apiClient = createClient(API_BASE_URL_SYSTEM)
-
-// ─── Booking Service — http://localhost:8081 ─────────────────────────────────
-export const bookingClient = createClient(API_BASE_URL_BOOKING)
 
 export default apiClient
