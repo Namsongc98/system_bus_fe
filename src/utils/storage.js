@@ -24,6 +24,29 @@ export function removeStorage(key) {
 export function clearStorage() {
   storage.clear()
 }
+
+/**
+ * Wipe everything the browser keeps for this app: localStorage, sessionStorage
+ * and every cookie readable from JS. Used when the session is invalid (JWT
+ * error) so the user must log in again. HttpOnly cookies cannot be cleared here.
+ */
+export function clearClientData() {
+  storage.clear()
+  try {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.clear()
+  } catch {
+    console.error('[storage] Failed to clear sessionStorage')
+  }
+  try {
+    if (typeof document === 'undefined' || !document.cookie) return
+    for (const cookie of document.cookie.split(';')) {
+      const name = cookie.split('=')[0].trim()
+      if (name) document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
+    }
+  } catch {
+    console.error('[storage] Failed to clear cookies')
+  }
+}
 // ─── Local Storage Helpers ────────────────────────────────────────────────────
 
 /**

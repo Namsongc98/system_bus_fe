@@ -1,11 +1,16 @@
-import { defineStore } from 'pinia'
+import { defineStore, getActivePinia } from 'pinia'
 import { ref, computed } from 'vue'
 import { authService } from '@/services/authService'
 import { LOCAL_STORAGE_KEYS, USER_ROLES } from '@/constants'
-import { getStorage, setStorage, removeStorage } from '@/utils/storage'
+import { getStorage, setStorage, removeStorage, clearClientData } from '@/utils/storage'
 import { ApiError } from '@/errors/ApiError'
+import { resetAllStores } from '@/stores/plugins/resetStore'
+import { abortSessionRequests } from '@/services/sessionAbort'
 
 export const useAuthStore = defineStore('auth', () => {
+  // The Pinia that owns this store: clearSession resets only its sibling stores.
+  const pinia = getActivePinia()
+
   // ─── State ────────────────────────────────────────────────────────────────
   const user = ref(normalizeUser(getStorage(LOCAL_STORAGE_KEYS.USER)))
   const accessToken = ref(getStorage(LOCAL_STORAGE_KEYS.ACCESS_TOKEN) ?? null)
@@ -76,8 +81,14 @@ export const useAuthStore = defineStore('auth', () => {
       setUser(currentUser)
       return currentUser
     } catch (err) {
-      clearSession()
-      throw toApiError(err)
+      const apiError = toApiError(err)
+      if (isJwtError(apiError)) {
+        clearSession()
+      } else if (!user.value?.email) {
+        // Server/network error keeps the session; without a loaded user, fall back to the JWT claims.
+        setTokenUser()
+      }
+      throw apiError
     }
   }
 
@@ -87,20 +98,18 @@ export const useAuthStore = defineStore('auth', () => {
       return null
     }
 
-    if (user.value) {
+    // A cached user without email was decoded from the JWT (older sessions): reload it from /auth/me.
+    if (user.value?.email) {
       sessionReady.value = true
       return user.value
     }
 
-    const tokenUser = getUserFromToken(accessToken.value)
-    if (tokenUser) {
-      setUser(tokenUser)
-      sessionReady.value = true
-      return tokenUser
-    }
-
     try {
       return await fetchMe()
+    } catch (err) {
+      // JWT error: session is already cleared and the router guard sends the user to login.
+      // Other errors: fetchMe already fell back to the JWT user.
+      return isJwtError(err) ? null : user.value
     } finally {
       sessionReady.value = true
     }
@@ -134,30 +143,46 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  // Clears localStorage, sessionStorage, readable cookies and every other store's data
+  // so the next login starts clean.
   function clearSession() {
     user.value = null
     accessToken.value = null
     refreshToken.value = null
     sessionReady.value = true
-    removeStorage(LOCAL_STORAGE_KEYS.ACCESS_TOKEN)
-    removeStorage(LOCAL_STORAGE_KEYS.REFRESH_TOKEN)
-    removeStorage(LOCAL_STORAGE_KEYS.USER)
+    // Cancel in-flight requests first so none can refill a store after the reset.
+    abortSessionRequests()
+    clearClientData()
+    resetAllStores(pinia, ['auth'])
   }
 
-  function resolveCurrentUser(data) {
+  async function resolveCurrentUser(data) {
     const currentUser = normalizeUser(data?.user ?? data?.currentUser ?? data?.profile)
     if (currentUser) {
       setUser(currentUser)
       return currentUser
     }
 
-    const tokenUser = getUserFromToken(data?.accessToken ?? accessToken.value)
-    if (tokenUser) {
-      setUser(tokenUser)
-      return tokenUser
+    // Drop any user from a previous session so fetchMe's fallback reflects the new token.
+    setUser(null)
+    try {
+      return await fetchMe()
+    } catch (err) {
+      if (isJwtError(err)) throw err
+      return user.value
     }
+  }
 
-    return fetchMe()
+  // Fallback when /auth/me is unreachable: the JWT only carries id (sub) and role.
+  function setTokenUser() {
+    const tokenUser = getUserFromToken(accessToken.value)
+    setUser(tokenUser)
+    return tokenUser
+  }
+
+  function isJwtError(err) {
+    // 401: missing/invalid/expired JWT. 404 from /auth/me: the JWT's user no longer exists.
+    return err?.status === 401 || err?.status === 404
   }
 
   function getResponseData(res) {
@@ -181,10 +206,13 @@ export const useAuthStore = defineStore('auth', () => {
     if (!payload || typeof payload !== 'object') return null
 
     const role = normalizeRole(payload.role ?? payload.authority ?? payload.scope)
+    // JWT "sub" is the user id, never the email.
+    const id = payload.id ?? payload.sub ?? null
     return {
       ...payload,
+      id: /^\d+$/.test(String(id)) ? Number(id) : id,
       role,
-      email: payload.email ?? payload.sub ?? payload.username ?? null,
+      email: payload.email ?? payload.username ?? null,
     }
   }
 
