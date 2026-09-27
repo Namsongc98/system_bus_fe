@@ -1,8 +1,15 @@
+// ─── API Base URL ─────────────────────────────────────────────────────────────
+// Every request goes through the Kong gateway (e.g. http://localhost:8000/api), which routes
+// /api/booking to the booking service and the rest of /api to manage-revenue.
+// Required: no fallback, so a missing value fails at startup instead of calling the wrong host.
+export const API_BASE_URL_SYSTEM = import.meta.env.VITE_KONG_API_URL
+if (!API_BASE_URL_SYSTEM) {
+  throw new Error(
+    'VITE_KONG_API_URL is not set. Point it at the Kong gateway, e.g. http://localhost:8000/api'
+  )
+}
+
 // ─── API Endpoint Constants ───────────────────────────────────────────────────
-export const API_BASE_URL_SYSTEM =
-  import.meta.env.VITE_API_BASE_URL_SYSTEM || 'http://localhost:8002/api'
-export const API_BASE_URL_BOOKING =
-  import.meta.env.VITE_API_BASE_URL_BOOKING || 'http://localhost:8001/api'
 
 export const API_ENDPOINTS = Object.freeze({
   AUTH: {
@@ -88,9 +95,5 @@ export const API_ENDPOINTS = Object.freeze({
     BASE_SALARY: '/base-salary',
   },
 })
-/**
- * Base API URL — pulled from Vite environment variables.
- * Define VITE_API_BASE_URL in your .env file.
- */
 
 export const API_TIMEOUT = 15_000 // 15 seconds

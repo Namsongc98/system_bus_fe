@@ -177,10 +177,8 @@ const handleLogin = async () => {
 // ❌ Wrong — variable name doesn't exist in .env
 baseURL: import.meta.env.VITE_API_BASE_URL
 
-// ✅ Fix — use correct variable names from .env
-baseURL: import.meta.env.VITE_API_BASE_URL_SYSTEM
-// or
-baseURL: import.meta.env.VITE_API_BASE_URL_BOOKING
+// ✅ Fix — the only API variable is the Kong gateway URL (read in src/constants/api_endpoint.js)
+baseURL: import.meta.env.VITE_KONG_API_URL // e.g. http://localhost:8000/api
 ```
 
 ---

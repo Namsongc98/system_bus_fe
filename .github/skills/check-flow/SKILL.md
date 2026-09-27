@@ -13,7 +13,7 @@ Trace and debug a full feature flow in a Vue 3 / Nuxt 3 project across all layer
 - **Vue 3** (Composition API, `<script setup>`)
 - **Nuxt 3**
 - **Pinia** (Composition API store syntax)
-- **Axios** via `apiClient` / `bookingClient`
+- **Axios** via the single `apiClient` (through Kong)
 - **Nuxt UI**
 - **Vue Router**
 
@@ -144,7 +144,7 @@ async login(credentials) {
 Inspect the service file (e.g., `src/services/authService.js`).
 
 **Verify:**
-- [ ] Correct `apiClient` or `bookingClient` is imported
+- [ ] Shared `apiClient` (default export of `./axios`) is imported
 - [ ] Correct HTTP method (`get`, `post`, `put`, `delete`)
 - [ ] Endpoint constant used (not hardcoded string)
 - [ ] Params passed as `{ params }` for GET, body directly for POST/PUT
@@ -159,13 +159,12 @@ apiClient.get(ENDPOINT, body)
 // ✅ Correct
 apiClient.get(ENDPOINT, { params })
 
-// ❌ Wrong — wrong client (booking API requires port 8081)
-import apiClient from './axios'
-export const createBooking = (payload) => apiClient.post(...)
+// ❌ Wrong — calling a service port directly bypasses Kong
+axios.post('http://localhost:8081/api/booking', payload)
 
-// ✅ Correct
-import { bookingClient } from './axios'
-export const createBooking = (payload) => bookingClient.post(...)
+// ✅ Correct — one client for every API; Kong routes /api/booking to the booking service
+import apiClient from './axios'
+export const createBooking = (payload) => apiClient.post(API_ENDPOINTS.BOOKING.BASE, payload)
 ```
 
 ---

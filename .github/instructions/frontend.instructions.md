@@ -198,7 +198,8 @@ src/
 
 ### Environment Variables
 - All env vars are accessed via `import.meta.env.VITE_*`
-- `VITE_API_BASE_URL` is consumed **only** in `src/services/axios.js`
+- `VITE_KONG_API_URL` (Kong gateway, e.g. `http://localhost:8000/api`) is required and read **only** in
+  `src/constants/api_endpoint.js`; `src/services/axios.js` builds the single `apiClient` from it
 
 ---
 
