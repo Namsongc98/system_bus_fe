@@ -5,7 +5,7 @@ import router from '@/router'
 import { useAuthStore } from '@/stores/auth'
 import { getSessionSignal } from '@/services/sessionAbort'
 import { ROUTE_NAMES } from '@/constants/routes'
-import { API_BASE_URL_SYSTEM, API_BASE_URL_BOOKING, API_ENDPOINTS } from '@/constants/api_endpoint'
+import { API_BASE_URL_SYSTEM, API_ENDPOINTS } from '@/constants/api_endpoint'
 
 // A 401 here means wrong credentials, not an expired session: the form shows the error.
 const CREDENTIAL_ENDPOINTS = [API_ENDPOINTS.AUTH.LOGIN, API_ENDPOINTS.AUTH.REGISTER]
@@ -61,10 +61,7 @@ function createClient(baseURL) {
   return client
 }
 
-// ─── Manage Revenue Service — http://localhost:8082 ──────────────────────────
+// ─── Kong gateway (VITE_KONG_API_URL) — the only client, booking included ────
 const apiClient = createClient(API_BASE_URL_SYSTEM)
-
-// ─── Booking Service — http://localhost:8081 ─────────────────────────────────
-export const bookingClient = createClient(API_BASE_URL_BOOKING)
 
 export default apiClient
