@@ -5,6 +5,8 @@ import BaseToggleSwitch from '@/components/elements/BaseToggleSwitch.vue'
 
 /**
  * RouteNetworkCard — presentational route summary card.
+ * Stats the BE does not return (avg time, stops, demand, active buses) are only shown
+ * when present (spec review 1.1 D3 = A).
  *
  * @typedef {Object} NetworkRoute
  * @property {string|number} id
@@ -23,7 +25,7 @@ const props = defineProps({
   selected: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select', 'delete'])
+const emit = defineEmits(['select', 'edit', 'delete'])
 
 const isSuspended = computed(() => props.route.status === 'suspended')
 const isPremium = computed(() => props.route.demandTone === 'premium')
@@ -38,11 +40,25 @@ const demandClass = computed(() => {
   if (isPremium.value) return 'text-sky-700'
   return 'text-emerald-800'
 })
-const stats = computed(() => [
-  { label: 'Distance', value: `${props.route.distance || 'N/A'} KM` },
-  { label: 'Avg Time', value: props.route.averageTime || 'N/A' },
-  { label: 'Stops', value: String(props.route.stops ?? '00').padStart(2, '0') },
-])
+const statusLabel = computed(
+  () => props.route.demandLabel || (isSuspended.value ? 'Inactive' : 'Active')
+)
+const hasValue = (value) => value !== undefined && value !== null && value !== ''
+const stats = computed(() =>
+  [
+    { label: 'Distance', value: `${props.route.distance || 'N/A'} KM`, show: true },
+    {
+      label: 'Avg Time',
+      value: props.route.averageTime,
+      show: hasValue(props.route.averageTime),
+    },
+    {
+      label: 'Stops',
+      value: String(props.route.stops ?? '').padStart(2, '0'),
+      show: hasValue(props.route.stops),
+    },
+  ].filter((stat) => stat.show)
+)
 
 const routeLabel = computed(() => `${props.route.origin} to ${props.route.destination}`)
 </script>
@@ -58,7 +74,7 @@ const routeLabel = computed(() => `${props.route.origin} to ${props.route.destin
           class="flex size-10 shrink-0 items-center justify-center rounded-full"
           :class="iconClass"
         >
-          <img src="@/assets/icons/IconRoute.svg" alt="Route Icon" class="size-6" />
+          <img src="@/assets/icons/IconRoute.svg" alt="" class="size-6" />
         </div>
         <div class="min-w-0">
           <h4 class="truncate text-lg leading-6 font-bold text-zinc-900">
@@ -69,6 +85,16 @@ const routeLabel = computed(() => `${props.route.origin} to ${props.route.destin
       </div>
 
       <div class="flex shrink-0 items-center gap-2">
+        <BaseButton
+          unstyled
+          :aria-label="`Edit route ${routeLabel}`"
+          class="!flex !size-8 !items-center !justify-center !rounded-full !p-0 !text-sky-700 transition hover:!bg-sky-50"
+          size="sm"
+          @click="emit('edit', route)"
+        >
+          <UIcon name="i-heroicons-pencil-square" class="size-4" />
+        </BaseButton>
+
         <BaseButton
           unstyled
           color="error"
@@ -89,7 +115,10 @@ const routeLabel = computed(() => `${props.route.origin} to ${props.route.destin
       </div>
     </header>
 
-    <dl class="grid grid-cols-3 rounded-[48px] bg-stone-100 px-4 py-3">
+    <dl
+      class="grid rounded-[48px] bg-stone-100 px-4 py-3"
+      :style="{ gridTemplateColumns: `repeat(${stats.length}, minmax(0, 1fr))` }"
+    >
       <div v-for="(stat, index) in stats" :key="stat.label" class="flex items-center">
         <div class="min-w-0">
           <dt class="text-[10px] leading-4 font-bold text-gray-500 uppercase">{{ stat.label }}</dt>
@@ -102,9 +131,9 @@ const routeLabel = computed(() => `${props.route.origin} to ${props.route.destin
     <footer class="flex items-center justify-between gap-4">
       <div class="flex min-w-0 items-center gap-2" :class="demandClass">
         <span class="size-3 shrink-0 rounded-sm bg-current"></span>
-        <p class="truncate text-xs leading-4 font-bold">{{ route.demandLabel }}</p>
+        <p class="truncate text-xs leading-4 font-bold">{{ statusLabel }}</p>
       </div>
-      <p class="shrink-0 text-xs leading-4 text-zinc-900">
+      <p v-if="hasValue(route.activeBuses)" class="shrink-0 text-xs leading-4 text-zinc-900">
         <span class="text-gray-700">Active Buses: </span>{{ route.activeBuses }}
       </p>
     </footer>

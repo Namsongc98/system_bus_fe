@@ -1,241 +1,136 @@
 <script setup>
 // BusesRoutes — /admin/buses-routes
 import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import ModalCreateBus from '@/components/common/Modal/ModalCreateBus.vue'
 import ModalCreateRoute from '@/components/common/Modal/ModalCreateRoute.vue'
-import ModalDeleteRoute from '@/components/common/Modal/ModalDeleteRoute.vue'
+import ModalDeleteConfirm from '@/components/common/Modal/ModalDeleteConfirm.vue'
 import FleetBusCard from '@/components/common/FleetBusCard.vue'
 import RouteMiniMap from '@/components/common/RouteMiniMap.vue'
 import RouteNetworkCard from '@/components/common/RouteNetworkCard.vue'
 import BaseButton from '@/components/elements/BaseButton.vue'
 import BaseEmptyState from '@/components/elements/BaseEmptyState.vue'
-import {
-  BUSES_ROUTES_FALLBACK_BUSES,
-  BUSES_ROUTES_FALLBACK_ROUTES,
-} from '@/constants/admin/busesRoutes'
-import { busService, routeService } from '@/services/busRouteService'
+import BasePagination from '@/components/elements/BasePagination.vue'
+import { useBusRouteStore } from '@/stores/busRoute'
 
-const buses = ref(BUSES_ROUTES_FALLBACK_BUSES)
-const routes = ref(BUSES_ROUTES_FALLBACK_ROUTES)
-const selectedRouteId = ref(BUSES_ROUTES_FALLBACK_ROUTES[0].id)
-const loading = ref(false)
-const error = ref('')
-const isCreateBusOpen = ref(false)
-const isCreateRouteOpen = ref(false)
-const isDeleteRouteOpen = ref(false)
-const routeToDelete = ref(null)
+const store = useBusRouteStore()
+const { buses, busPage, busesLoading, busesError, routes, routePage, routesLoading, routesError } =
+  storeToRefs(store)
 
-const activeBusCount = computed(() => buses.value.filter((bus) => bus.status === 'active').length)
-const selectedRoute = computed(
-  () =>
-    routes.value.find((route) => String(route.id) === String(selectedRouteId.value)) ||
-    routes.value[0]
+const selectedRouteId = ref(null)
+const isBusModalOpen = ref(false)
+const busToEdit = ref(null)
+const isRouteModalOpen = ref(false)
+const routeToEdit = ref(null)
+const isDeleteOpen = ref(false)
+const deleteTarget = ref(null)
+
+// BusResponse / RouteResponse → card props. Only BE fields (spec review 1.1 D3 = A).
+function normalizeBus(bus) {
+  return { id: bus.id, plate: bus.plateNumber, capacity: bus.capacity, status: bus.status }
+}
+
+function normalizeRoute(route) {
+  return {
+    id: route.id,
+    origin: route.startPoint,
+    destination: route.endPoint,
+    subtitle: route.routeName,
+    distance: route.distanceKm,
+    status: route.status === 'INACTIVE' ? 'suspended' : 'active',
+  }
+}
+
+const busCards = computed(() => buses.value.map(normalizeBus))
+// The skeleton / error block replaces the list only when there is nothing to show yet; a
+// refresh after a page change or mutation keeps the current cards on screen.
+const showBusesLoading = computed(() => busesLoading.value && !busCards.value.length)
+const showBusesError = computed(() => !!busesError.value)
+const hasBusList = computed(
+  () => !showBusesLoading.value && !(busesError.value && !busCards.value.length)
 )
+const routeCards = computed(() => routes.value.map(normalizeRoute))
+const showRoutesLoading = computed(() => routesLoading.value && !routeCards.value.length)
+const hasRouteList = computed(
+  () => !showRoutesLoading.value && !(routesError.value && !routeCards.value.length)
+)
+const selectedRoute = computed(
+  () => routeCards.value.find((route) => String(route.id) === String(selectedRouteId.value)) || null
+)
+const findBus = (id) => buses.value.find((bus) => String(bus.id) === String(id)) || null
+const findRoute = (id) => routes.value.find((route) => String(route.id) === String(id)) || null
 
-function firstDefined(...values) {
-  return values.find((value) => value !== undefined && value !== null && value !== '')
+function loadBuses(page) {
+  return store.fetchBuses({ page })
 }
 
-function getPayload(response) {
-  return response?.data?.data ?? response?.data ?? response
-}
-
-function getCollection(response) {
-  const payload = getPayload(response)
-  if (Array.isArray(payload)) return payload
-  if (Array.isArray(payload?.content)) return payload.content
-  if (Array.isArray(payload?.items)) return payload.items
-  if (Array.isArray(payload?.data)) return payload.data
-  return []
-}
-
-function toNumber(value, fallback = 0) {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : fallback
-}
-
-function normalizeStatus(value, active) {
-  const status = String(value || '').toLowerCase()
-  if (status.includes('maintenance') || status.includes('service')) return 'maintenance'
-  if (status.includes('suspend') || status.includes('inactive') || active === false)
-    return 'suspended'
-  return 'active'
-}
-
-function getDrivers(bus) {
-  const driverValues = firstDefined(bus.drivers, bus.driverNames, bus.assignedDrivers, [])
-  if (Array.isArray(driverValues)) {
-    return driverValues.map((driver) =>
-      typeof driver === 'string'
-        ? driver
-        : firstDefined(driver.name, driver.fullName, driver.username, `Driver #${driver.id}`)
-    )
-  }
-
-  const driver = firstDefined(bus.driverName, bus.driver?.name, bus.driver?.fullName)
-  return driver ? [driver] : []
-}
-
-function getCoordinate(entity, keys, fallback) {
-  const value = keys.map((key) => entity?.[key]).find((item) => item !== undefined && item !== null)
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : fallback
-}
-
-function normalizeBus(bus, index) {
-  return {
-    id: firstDefined(bus.id, bus.busId, bus.plateNumber, index),
-    plate: firstDefined(
-      bus.plate,
-      bus.plateNumber,
-      bus.plate_number,
-      bus.licensePlate,
-      `Bus #${index + 1}`
-    ),
-    model: firstDefined(bus.model, bus.type, bus.name, 'Unknown model'),
-    capacity: firstDefined(bus.capacity, bus.seats, bus.seatCount, 'N/A'),
-    uptime: firstDefined(bus.uptime, bus.uptimePercent, bus.availability, 96),
-    age: firstDefined(
-      bus.age,
-      bus.vehicleAge,
-      bus.year ? `${new Date().getFullYear() - bus.year}y` : 'N/A'
-    ),
-    status: normalizeStatus(firstDefined(bus.status, bus.state), bus.active),
-    drivers: getDrivers(bus),
-    maintenanceNote: firstDefined(bus.maintenanceNote, bus.serviceNote, bus.note, ''),
-  }
-}
-
-function normalizeRoute(route, index) {
-  const origin = firstDefined(route.origin, route.from, route.startPoint, route.departure, 'Origin')
-  const destination = firstDefined(
-    route.destination,
-    route.to,
-    route.endPoint,
-    route.arrival,
-    'Destination'
-  )
-  const status = normalizeStatus(firstDefined(route.status, route.state), route.active)
-
-  return {
-    id: firstDefined(route.id, route.routeId, `${origin}-${destination}-${index}`),
-    origin,
-    destination,
-    subtitle: firstDefined(route.subtitle, route.name, route.routeName, 'Intercity Corridor'),
-    distance: firstDefined(route.distance, route.distanceKm, route.lengthKm, 0),
-    averageTime: firstDefined(route.averageTime, route.duration, route.estimatedDuration, 'N/A'),
-    stops: firstDefined(route.stops, route.stopCount, route.totalStops, 0),
-    status,
-    demandLabel: firstDefined(
-      route.demandLabel,
-      route.statusLabel,
-      status === 'suspended' ? 'Temporarily Suspended' : 'High Demand'
-    ),
-    demandTone: firstDefined(route.demandTone, status === 'suspended' ? 'suspended' : 'high'),
-    activeBuses: firstDefined(route.activeBuses, route.busCount, route.totalBuses, 0),
-    start: [
-      getCoordinate(
-        route,
-        ['startLat', 'originLat', 'fromLat', 'departureLat'],
-        BUSES_ROUTES_FALLBACK_ROUTES[index % BUSES_ROUTES_FALLBACK_ROUTES.length].start[0]
-      ),
-      getCoordinate(
-        route,
-        ['startLng', 'originLng', 'fromLng', 'departureLng'],
-        BUSES_ROUTES_FALLBACK_ROUTES[index % BUSES_ROUTES_FALLBACK_ROUTES.length].start[1]
-      ),
-    ],
-    end: [
-      getCoordinate(
-        route,
-        ['endLat', 'destinationLat', 'toLat', 'arrivalLat'],
-        BUSES_ROUTES_FALLBACK_ROUTES[index % BUSES_ROUTES_FALLBACK_ROUTES.length].end[0]
-      ),
-      getCoordinate(
-        route,
-        ['endLng', 'destinationLng', 'toLng', 'arrivalLng'],
-        BUSES_ROUTES_FALLBACK_ROUTES[index % BUSES_ROUTES_FALLBACK_ROUTES.length].end[1]
-      ),
-    ],
-  }
-}
-
-function useFallback(reason) {
-  buses.value = BUSES_ROUTES_FALLBACK_BUSES
-  routes.value = BUSES_ROUTES_FALLBACK_ROUTES
-  selectedRouteId.value = BUSES_ROUTES_FALLBACK_ROUTES[0].id
-  error.value = reason
-}
-
-async function fetchFleetNetwork() {
-  loading.value = true
-  error.value = ''
-
-  const [busResult, routeResult] = await Promise.allSettled([
-    busService.getAll(),
-    routeService.getAll(),
-  ])
-
-  const nextBuses =
-    busResult.status === 'fulfilled' ? getCollection(busResult.value).map(normalizeBus) : []
-  const nextRoutes =
-    routeResult.status === 'fulfilled' ? getCollection(routeResult.value).map(normalizeRoute) : []
-
-  if (nextBuses.length || nextRoutes.length) {
-    buses.value = nextBuses.length ? nextBuses : BUSES_ROUTES_FALLBACK_BUSES
-    routes.value = nextRoutes.length ? nextRoutes : BUSES_ROUTES_FALLBACK_ROUTES
+// Keep the selection if the route is still listed, otherwise pick the first active one.
+function ensureRouteSelection() {
+  if (!findRoute(selectedRouteId.value)) {
     selectedRouteId.value =
-      routes.value.find((route) => route.status === 'active')?.id || routes.value[0]?.id || null
-    error.value =
-      busResult.status === 'rejected' || routeResult.status === 'rejected'
-        ? 'Some fleet data is unavailable. Showing available data with sample fallbacks.'
-        : ''
-  } else {
-    useFallback('Fleet APIs returned no records. Showing sample fleet network data.')
+      routes.value.find((route) => route.status === 'ACTIVE')?.id ?? routes.value[0]?.id ?? null
   }
+}
 
-  loading.value = false
+async function loadRoutes(page) {
+  await store.fetchRoutes({ page })
+  ensureRouteSelection()
 }
 
 function selectRoute(route) {
-  selectedRouteId.value =
-    String(selectedRouteId.value) === String(route.id) ? null : route.id
+  selectedRouteId.value = String(selectedRouteId.value) === String(route.id) ? null : route.id
 }
 
-function openCreateBusModal() {
-  isCreateBusOpen.value = true
+function openBusModal(card = null) {
+  busToEdit.value = card ? findBus(card.id) : null
+  isBusModalOpen.value = true
 }
 
-function openCreateRouteModal() {
-  isCreateRouteOpen.value = true
+function openRouteModal(card = null) {
+  routeToEdit.value = card ? findRoute(card.id) : null
+  isRouteModalOpen.value = true
 }
 
-function openDeleteRouteModal(route) {
-  routeToDelete.value = route
-  isDeleteRouteOpen.value = true
-}
-
-function handleRouteDeleted(deletedRoute) {
-  if (String(selectedRouteId.value) === String(deletedRoute?.id)) {
-    selectedRouteId.value = null
+function openDeleteBus(card) {
+  deleteTarget.value = {
+    entityType: 'bus',
+    entityName: card.plate,
+    onConfirm: () => store.deleteBus(card.id),
   }
-
-  fetchFleetNetwork()
+  isDeleteOpen.value = true
 }
 
-onMounted(fetchFleetNetwork)
+function openDeleteRoute(card) {
+  deleteTarget.value = {
+    entityType: 'route',
+    entityName: card.subtitle,
+    onConfirm: async () => {
+      await store.deleteRoute(card.id)
+      ensureRouteSelection()
+    },
+  }
+  isDeleteOpen.value = true
+}
+
+onMounted(() => {
+  loadBuses(0)
+  loadRoutes(0)
+})
 </script>
 
 <template>
   <div
     class="grid grid-cols-1 gap-8 p-4 md:p-8 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.85fr)]"
   >
-    <section class="flex flex-col gap-6 pb-8 xl:pb-96">
+    <section class="flex flex-col gap-6 pb-8">
       <header class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 class="text-3xl leading-9 font-extrabold text-sky-950">Buses Fleet</h1>
           <p class="mt-1 text-sm leading-5 text-gray-700">
-            Manage {{ activeBusCount }} active vehicles in your network.
+            <template v-if="hasBusList">
+              {{ busPage.totalElements }} vehicles in your network.
+            </template>
+            <template v-else>Manage the vehicles in your network.</template>
           </p>
         </div>
         <BaseButton
@@ -243,7 +138,7 @@ onMounted(fetchFleetNetwork)
           size="md"
           html-type="button"
           class="self-start sm:self-auto"
-          @click="openCreateBusModal"
+          @click="openBusModal()"
         >
           <template #icon-left>
             <span class="size-2 rounded-full bg-white"></span>
@@ -252,19 +147,57 @@ onMounted(fetchFleetNetwork)
         </BaseButton>
       </header>
 
-      <BaseEmptyState v-if="error" :title="error" tone="warning" class="text-left" />
-
       <div
-        v-if="loading"
+        v-if="showBusesLoading"
+        role="status"
         class="rounded-2xl bg-white/70 p-5 text-sm font-semibold text-sky-700 shadow-sm"
+        data-testid="buses-loading"
       >
-        Loading fleet network...
+        Loading buses...
       </div>
 
-      <div class="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
-        <FleetBusCard v-for="bus in buses" :key="bus.id" :bus="bus" />
-        <FleetBusCard :bus="{ id: 'new' }" is-add-card />
+      <div v-if="showBusesError" role="alert" class="flex flex-col gap-3" data-testid="buses-error">
+        <BaseEmptyState :title="busesError" tone="danger" />
+        <BaseButton
+          label="Retry"
+          type="outline"
+          size="sm"
+          class="self-center"
+          @click="loadBuses(busPage.page)"
+        />
       </div>
+
+      <template v-if="hasBusList">
+        <BaseEmptyState
+          v-if="!busCards.length && !busesError"
+          title="No buses yet"
+          description="Register your first vehicle to start scheduling trips."
+          data-testid="buses-empty"
+        />
+        <div
+          class="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3"
+          :aria-busy="busesLoading"
+        >
+          <FleetBusCard
+            v-for="bus in busCards"
+            :key="bus.id"
+            :bus="bus"
+            @edit="openBusModal"
+            @delete="openDeleteBus"
+          />
+          <FleetBusCard :bus="{ id: 'new' }" is-add-card @add="openBusModal()" />
+        </div>
+        <BasePagination
+          v-if="busPage.totalPages > 1"
+          :page="busPage.page"
+          :total-pages="busPage.totalPages"
+          :has-prev-page="busPage.page > 0"
+          :has-next-page="busPage.page + 1 < busPage.totalPages"
+          :loading="busesLoading"
+          @prev="loadBuses(busPage.page - 1)"
+          @next="loadBuses(busPage.page + 1)"
+        />
+      </template>
     </section>
 
     <section class="flex flex-col gap-6 pb-11">
@@ -272,8 +205,10 @@ onMounted(fetchFleetNetwork)
         <div>
           <h2 class="text-3xl leading-9 font-extrabold text-sky-950">Routes Network</h2>
           <p class="mt-1 text-sm leading-5 text-gray-700">
-            Global inter-city connection<br class="hidden sm:block" />
-            matrix.
+            <template v-if="hasRouteList"
+              >{{ routePage.totalElements }} inter-city routes.</template
+            >
+            <template v-else>Manage the inter-city routes.</template>
           </p>
         </div>
         <BaseButton
@@ -282,7 +217,7 @@ onMounted(fetchFleetNetwork)
           size="md"
           html-type="button"
           class="self-start"
-          @click="openCreateRouteModal"
+          @click="openRouteModal()"
         >
           <template #icon-left>
             <span class="size-2.5 rounded-full bg-zinc-900"></span>
@@ -291,26 +226,67 @@ onMounted(fetchFleetNetwork)
         </BaseButton>
       </header>
 
-      <div class="flex flex-col gap-4">
-        <RouteNetworkCard
-          v-for="route in routes"
-          :key="route.id"
-          :route="route"
-          :selected="String(route.id) === String(selectedRouteId)"
-          @select="selectRoute"
-          @delete="openDeleteRouteModal"
+      <div
+        v-if="showRoutesLoading"
+        role="status"
+        class="rounded-2xl bg-white/70 p-5 text-sm font-semibold text-sky-700 shadow-sm"
+        data-testid="routes-loading"
+      >
+        Loading routes...
+      </div>
+
+      <div v-if="routesError" role="alert" class="flex flex-col gap-3" data-testid="routes-error">
+        <BaseEmptyState :title="routesError" tone="danger" />
+        <BaseButton
+          label="Retry"
+          type="outline"
+          size="sm"
+          class="self-center"
+          @click="loadRoutes(routePage.page)"
         />
       </div>
+
+      <template v-if="hasRouteList">
+        <BaseEmptyState
+          v-if="!routeCards.length && !routesError"
+          title="No routes yet"
+          description="Create your first route to connect an origin and a destination."
+          data-testid="routes-empty"
+        />
+        <div class="flex flex-col gap-4" :aria-busy="routesLoading">
+          <RouteNetworkCard
+            v-for="route in routeCards"
+            :key="route.id"
+            :route="route"
+            :selected="String(route.id) === String(selectedRouteId)"
+            @select="selectRoute"
+            @edit="openRouteModal"
+            @delete="openDeleteRoute"
+          />
+        </div>
+        <BasePagination
+          v-if="routePage.totalPages > 1"
+          :page="routePage.page"
+          :total-pages="routePage.totalPages"
+          :has-prev-page="routePage.page > 0"
+          :has-next-page="routePage.page + 1 < routePage.totalPages"
+          :loading="routesLoading"
+          @prev="loadRoutes(routePage.page - 1)"
+          @next="loadRoutes(routePage.page + 1)"
+        />
+      </template>
 
       <RouteMiniMap :route="selectedRoute" />
     </section>
 
-    <ModalCreateBus v-model="isCreateBusOpen" @created="fetchFleetNetwork" />
-    <ModalCreateRoute v-model="isCreateRouteOpen" @created="fetchFleetNetwork" />
-    <ModalDeleteRoute
-      v-model="isDeleteRouteOpen"
-      :route="routeToDelete"
-      @deleted="handleRouteDeleted"
+    <ModalCreateBus v-model="isBusModalOpen" :bus="busToEdit" />
+    <ModalCreateRoute v-model="isRouteModalOpen" :route="routeToEdit" />
+    <ModalDeleteConfirm
+      v-if="deleteTarget"
+      v-model="isDeleteOpen"
+      :entity-type="deleteTarget.entityType"
+      :entity-name="deleteTarget.entityName"
+      :on-confirm="deleteTarget.onConfirm"
     />
   </div>
 </template>

@@ -60,13 +60,13 @@ export const API_ENDPOINTS = Object.freeze({
   },
 
   BUSES: {
-    BASE: '/bus', // GET ✓ BusController.java:29, POST ✓ BusController.java:44
-    BY_ID: (id) => `/bus/${id}`, // PUT ✓ BusController.java:51 · GET, DELETE BE: missing (1.1)
+    BASE: '/bus', // GET ✓ BusController.java:27 (?status&page&size), POST ✓ BusController.java:43
+    BY_ID: (id) => `/bus/${id}`, // GET ✓ BusController.java:37, PUT ✓ :51, DELETE ✓ :58
   },
 
   ROUTES: {
-    BASE: '/route', // POST ✓ RouteController.java:27 · GET BE: missing (1.1)
-    BY_ID: (id) => `/route/${id}`, // PUT ✓ RouteController.java:35 · GET, DELETE BE: missing (1.1)
+    BASE: '/route', // GET ✓ RouteController.java:31 (?status&page&size), POST ✓ RouteController.java:47
+    BY_ID: (id) => `/route/${id}`, // GET ✓ RouteController.java:41, PUT ✓ :56, DELETE ✓ :64
   },
 
   ADMIN: {

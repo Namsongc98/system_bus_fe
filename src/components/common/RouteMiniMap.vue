@@ -1,28 +1,36 @@
 <script setup>
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import BaseButton from '@/components/elements/BaseButton.vue'
 
 const props = defineProps({
   route: { type: Object, default: null },
 })
 
-const defaultPoints = {
-  start: [51.5074, -0.1278],
-  end: [53.4808, -2.2426],
-}
+// Routes carry no coordinates yet (spec review 1.1 D3 = A): show the network area and the
+// route's endpoint names, and only draw a line when real start/end points are provided.
+const DEFAULT_CENTER = [16.0544, 106.5]
+const DEFAULT_ZOOM = 5
 
 const mapContainer = ref(null)
-const mapInstance = ref(null)
-const routeLayer = ref(null)
-const routeMarkers = ref([])
+// Leaflet objects must not be deep-proxied by Vue.
+const mapInstance = shallowRef(null)
+const routeLayer = shallowRef(null)
+const routeMarkers = shallowRef([])
+
+const routeTitle = computed(() =>
+  props.route ? `${props.route.origin} → ${props.route.destination}` : 'Network Overview'
+)
+const routeCaption = computed(() => {
+  if (!props.route) return 'Select a route to highlight it'
+  return props.route.distance
+    ? `${props.route.subtitle} · ${props.route.distance} km`
+    : props.route.subtitle
+})
 
 function getPoints() {
-  return {
-    start: props.route?.start || defaultPoints.start,
-    end: props.route?.end || defaultPoints.end,
-  }
+  const { start, end } = props.route || {}
+  return Array.isArray(start) && Array.isArray(end) ? { start, end } : null
 }
 
 function clearRoute() {
@@ -43,7 +51,7 @@ function ensureMap() {
     attributionControl: false,
     dragging: true,
     scrollWheelZoom: false,
-  }).setView(defaultPoints.start, 6)
+  }).setView(DEFAULT_CENTER, DEFAULT_ZOOM)
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 18,
@@ -55,7 +63,14 @@ function renderRoute() {
 
   clearRoute()
 
-  const { start, end } = getPoints()
+  const points = getPoints()
+  if (!points) {
+    mapInstance.value.setView(DEFAULT_CENTER, DEFAULT_ZOOM)
+    mapInstance.value.invalidateSize()
+    return
+  }
+
+  const { start, end } = points
   const title = props.route
     ? `${props.route.origin} to ${props.route.destination}`
     : 'Network Overview'
@@ -120,18 +135,8 @@ onBeforeUnmount(() => {
     <div
       class="pointer-events-none absolute inset-0 flex flex-col justify-end bg-gradient-to-r from-zinc-900/60 to-zinc-900/0 p-6"
     >
-      <p class="text-lg leading-7 font-normal text-white">Network Overview</p>
-      <p class="text-xs leading-4 text-white/80">
-        Real-time status of all active transit corridors
-      </p>
+      <p class="text-lg leading-7 font-normal text-white">{{ routeTitle }}</p>
+      <p class="text-xs leading-4 text-white/80">{{ routeCaption }}</p>
     </div>
-
-    <BaseButton
-      unstyled
-      aria-label="Open route map"
-      class="absolute top-4 right-4 flex size-9 items-center justify-center rounded-full bg-white/20 text-white backdrop-blur-[6px] hover:bg-white/30"
-    >
-      <span class="size-4 rounded-sm bg-current"></span>
-    </BaseButton>
   </section>
 </template>
