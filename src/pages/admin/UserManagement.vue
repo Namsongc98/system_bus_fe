@@ -5,171 +5,112 @@ import { storeToRefs } from 'pinia'
 import BaseButton from '@/components/elements/BaseButton.vue'
 import BaseEmptyState from '@/components/elements/BaseEmptyState.vue'
 import BasePagination from '@/components/elements/BasePagination.vue'
+import ModalUserForm from '@/components/common/Modal/ModalUserForm.vue'
+import ModalUserStatus from '@/components/common/Modal/ModalUserStatus.vue'
+import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
-import { usePagination } from '@/composables/usePagination'
-import { useToast } from '@/composables/useToast'
 import {
   USER_MANAGEMENT_COLUMNS,
-  USER_MANAGEMENT_FALLBACK_USERS,
+  USER_MANAGEMENT_EMPTY_TITLES,
   USER_MANAGEMENT_ROLE_BADGE_CLASSES,
   USER_MANAGEMENT_ROLE_TABS,
 } from '@/constants/admin/userManagement'
 
 const userStore = useUserStore()
-const { users, loading, error, total } = storeToRefs(userStore)
-const pagination = usePagination()
-const toast = useToast()
+const authStore = useAuthStore()
+const { users, page, loading, error, counts, countsError, statusUpdatingId } =
+  storeToRefs(userStore)
 
 const selectedRole = ref('all')
-const warning = ref('')
-const deletingId = ref(null)
+const formOpen = ref(false)
+const editingUser = ref(null)
+const statusOpen = ref(false)
+const statusUser = ref(null)
 
-const normalizedUsers = computed(() => users.value.map(normalizeUser))
-const fallbackUsers = computed(() => USER_MANAGEMENT_FALLBACK_USERS.map(normalizeUser))
-const isFallbackMode = computed(() => !normalizedUsers.value.length && !!warning.value)
-const visibleUsers = computed(() =>
-  isFallbackMode.value ? fallbackUsers.value : normalizedUsers.value
-)
-
-const tabCounts = computed(() => {
-  const records = normalizedUsers.value.length ? normalizedUsers.value : fallbackUsers.value
-
-  return USER_MANAGEMENT_ROLE_TABS.reduce((counts, tab) => {
-    counts[tab.value] =
-      tab.value === 'all'
-        ? total.value || records.length
-        : records.filter((user) => user.role === tab.value).length
-    return counts
-  }, {})
+const dateFormatter = new Intl.DateTimeFormat('en-GB', {
+  day: '2-digit',
+  month: 'short',
+  year: 'numeric',
 })
 
-function firstDefined(...values) {
-  return values.find((value) => value !== undefined && value !== null && value !== '')
-}
+const rows = computed(() => users.value.map(toRow))
+// The loading / error block replaces the table only when there is nothing to show yet.
+const showLoading = computed(() => loading.value && !rows.value.length)
+const showEmpty = computed(() => !loading.value && !error.value && !rows.value.length)
+const emptyTitle = computed(
+  () => USER_MANAGEMENT_EMPTY_TITLES[selectedRole.value] ?? USER_MANAGEMENT_EMPTY_TITLES.all
+)
 
-function normalizeRole(value) {
-  const role = String(value || 'user').toLowerCase()
-
-  if (role.includes('admin')) return 'admin'
-  if (role.includes('driver')) return 'driver'
-  if (role.includes('collector')) return 'collector'
-  if (role.includes('customer')) return 'customer'
-  return 'user'
-}
-
-function normalizeActive(user) {
-  const active = firstDefined(user.active, user.enabled)
-  if (typeof active === 'boolean') return active
-
-  if (user.status) {
-    const status = String(user.status).toLowerCase()
-    if (['inactive', 'disabled', 'blocked', 'suspended'].includes(status)) return false
-    if (status === 'active') return true
-  }
-
-  return true
+function tabCount(tab) {
+  if (countsError.value) return null
+  return tab.value === 'all' ? counts.value.total : (counts.value.byRole[tab.value] ?? 0)
 }
 
 function getInitials(name) {
   return String(name)
-    .split(' ')
+    .split(/[\s@._-]+/)
     .filter(Boolean)
     .slice(0, 2)
     .map((part) => part.charAt(0).toUpperCase())
     .join('')
 }
 
-function normalizeUser(user, index = 0) {
-  const name = firstDefined(user.name, user.fullName, user.username, 'Unknown user')
+function formatDate(value) {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : dateFormatter.format(date)
+}
 
+// UserResponse → table row. Name falls back to the email: users from public register have no profile.
+function toRow(user) {
+  const name = user.fullName || user.email
   return {
-    id: firstDefined(user.id, user._id, user.userId, `user-${index}`),
+    ...user,
     name,
-    email: firstDefined(user.email, 'No email'),
-    role: normalizeRole(user.role ?? user.authority ?? user.scope),
-    active: normalizeActive(user),
-    lastActivity: firstDefined(
-      user.lastActivity,
-      user.lastLoginAt,
-      user.updatedAt,
-      'No recent activity'
-    ),
-    avatar: firstDefined(user.avatar, user.avatarUrl, ''),
     initials: getInitials(name) || 'U',
+    createdLabel: formatDate(user.createdAt),
+    isSelf: authStore.user?.id != null && String(authStore.user.id) === String(user.id),
   }
 }
 
 function roleBadgeClass(role) {
-  return USER_MANAGEMENT_ROLE_BADGE_CLASSES[role] ?? USER_MANAGEMENT_ROLE_BADGE_CLASSES.user
+  return USER_MANAGEMENT_ROLE_BADGE_CLASSES[role] ?? USER_MANAGEMENT_ROLE_BADGE_CLASSES.EMPLOYEE
 }
 
-function buildFetchParams() {
-  const params = {
-    page: pagination.page.value,
-    size: pagination.size.value,
-  }
-
-  if (selectedRole.value !== 'all') params.role = selectedRole.value
-  return params
-}
-
-async function fetchUsers() {
-  warning.value = ''
-
-  try {
-    await userStore.fetchAll(buildFetchParams())
-    pagination.total.value = total.value
-
-    if (!users.value.length) {
-      warning.value = 'No users were returned by the API. Showing sample user management data.'
-    }
-  } catch (err) {
-    pagination.total.value = 0
-    warning.value = err?.message || 'Unable to load users. Showing sample user management data.'
-  }
+function loadUsers(pageNumber) {
+  return userStore.fetchAll({
+    page: pageNumber,
+    role: selectedRole.value === 'all' ? null : selectedRole.value,
+  })
 }
 
 async function selectRole(role) {
-  if (role === selectedRole.value || loading.value) return
+  if (role === selectedRole.value) return
   selectedRole.value = role
-  pagination.reset()
-  await fetchUsers()
+  await loadUsers(0)
 }
 
-async function goToNextPage() {
-  pagination.nextPage()
-  await fetchUsers()
+function openCreate() {
+  editingUser.value = null
+  formOpen.value = true
 }
 
-async function goToPrevPage() {
-  pagination.prevPage()
-  await fetchUsers()
+function openEdit(user) {
+  editingUser.value = user
+  formOpen.value = true
 }
 
-async function deleteUser(user) {
-  if (isFallbackMode.value || deletingId.value || loading.value) return
-
-  const confirmed = window.confirm(`Delete ${user.name}? This action cannot be undone.`)
-  if (!confirmed) return
-
-  deletingId.value = user.id
-
-  try {
-    await userStore.deleteUser(user.id)
-    toast.success('User deleted successfully')
-    await fetchUsers()
-  } catch (err) {
-    toast.error(err?.message || 'Unable to delete user')
-  } finally {
-    deletingId.value = null
-  }
+function openStatus(user) {
+  if (user.isSelf) return
+  statusUser.value = user
+  statusOpen.value = true
 }
 
-onMounted(fetchUsers)
+onMounted(() => Promise.all([loadUsers(0), userStore.fetchCounts()]))
 </script>
 
 <template>
-  <div class="flex flex-col gap-8 px-4 pt-6 pb-12 md:px-8 md:pt-10">
+  <div class="flex flex-col gap-8 px-4 pt-6 pb-24 md:px-8 md:pt-10">
     <header class="flex flex-col gap-2">
       <h1 class="text-3xl leading-9 font-bold text-zinc-900">User Management</h1>
       <p class="max-w-xl text-base leading-6 text-gray-700">
@@ -190,7 +131,6 @@ onMounted(fetchUsers)
           html-type="button"
           role="tab"
           :aria-selected="selectedRole === tab.value"
-          :disabled="loading"
           class="inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm leading-5 transition-colors"
           :class="
             selectedRole === tab.value
@@ -201,6 +141,7 @@ onMounted(fetchUsers)
         >
           <span>{{ tab.label }}</span>
           <span
+            v-if="tabCount(tab) !== null"
             class="rounded-md px-2 py-0.5 text-[10px] leading-5"
             :class="
               selectedRole === tab.value
@@ -208,36 +149,50 @@ onMounted(fetchUsers)
                 : 'bg-stone-300 text-gray-700'
             "
           >
-            {{ tabCounts[tab.value] ?? 0 }}
+            {{ tabCount(tab) }}
           </span>
         </BaseButton>
       </div>
     </section>
 
-    <BaseEmptyState v-if="warning" :title="warning" tone="warning" class="text-left" />
-    <BaseEmptyState v-else-if="error" :title="error" tone="danger" class="text-left" />
+    <div v-if="error" role="alert" class="flex flex-col gap-3" data-testid="users-error">
+      <BaseEmptyState :title="error" tone="danger" class="text-left" />
+      <BaseButton
+        label="Retry"
+        type="outline"
+        size="sm"
+        class="self-center"
+        @click="loadUsers(page.page)"
+      />
+    </div>
 
     <section
       class="overflow-hidden rounded-3xl bg-white/80 shadow-[0px_32px_64px_0px_rgba(27,27,28,0.04)] outline outline-1 outline-offset-[-1px] outline-white/50 backdrop-blur-md"
     >
-      <div v-if="loading && !deletingId" class="p-8 text-center text-sm font-semibold text-sky-700">
+      <div
+        v-if="showLoading"
+        role="status"
+        class="p-8 text-center text-sm font-semibold text-sky-700"
+        data-testid="users-loading"
+      >
         Loading users...
       </div>
 
-      <div v-else-if="!visibleUsers.length" class="p-8">
+      <div v-else-if="showEmpty" class="p-8" data-testid="users-empty">
         <BaseEmptyState
-          title="No users found"
-          description="Try another role filter or refresh after users are created."
+          :title="emptyTitle"
+          description="Create a user with the + button, or pick another role."
         />
       </div>
 
-      <div v-else class="overflow-x-auto">
+      <div v-else-if="rows.length" class="overflow-x-auto" :aria-busy="loading">
         <table class="w-full min-w-[880px] divide-y divide-zinc-100">
           <thead class="bg-stone-100/70">
             <tr>
               <th
                 v-for="column in USER_MANAGEMENT_COLUMNS"
                 :key="column.key"
+                scope="col"
                 class="px-6 py-4 text-left text-xs leading-4 font-bold tracking-wider text-gray-700 uppercase"
                 :class="{ 'text-right': column.key === 'action' }"
               >
@@ -247,33 +202,32 @@ onMounted(fetchUsers)
           </thead>
           <tbody class="divide-y divide-zinc-100 bg-white">
             <tr
-              v-for="user in visibleUsers"
+              v-for="user in rows"
               :key="user.id"
               class="transition-colors hover:bg-sky-50/50"
+              :data-testid="`user-row-${user.id}`"
             >
               <td class="px-6 py-5">
                 <div class="flex items-center gap-4">
                   <div class="relative size-12 shrink-0">
-                    <img
-                      v-if="user.avatar"
-                      :src="user.avatar"
-                      :alt="`${user.name} avatar`"
-                      class="size-12 rounded-full border-2 border-white object-cover shadow-sm"
-                    />
                     <div
-                      v-else
                       class="flex size-12 items-center justify-center rounded-full border-2 border-white bg-sky-100 text-sm font-bold text-sky-800 shadow-sm"
+                      aria-hidden="true"
                     >
                       {{ user.initials }}
                     </div>
                     <span
                       class="absolute right-0 bottom-0 size-3 rounded-full border-2 border-white"
                       :class="user.active ? 'bg-emerald-500' : 'bg-zinc-300'"
+                      aria-hidden="true"
                     ></span>
                   </div>
                   <div class="min-w-0">
                     <p class="truncate text-base leading-6 font-bold text-zinc-900">
                       {{ user.name }}
+                      <span v-if="user.isSelf" class="ml-1 text-xs font-medium text-gray-500">
+                        (you)
+                      </span>
                     </p>
                     <p class="truncate text-xs leading-4 font-medium text-gray-700">
                       {{ user.email }}
@@ -287,41 +241,56 @@ onMounted(fetchUsers)
                   class="inline-flex items-center rounded-full px-3 py-1 text-xs font-bold tracking-wide uppercase ring-1"
                   :class="roleBadgeClass(user.role)"
                 >
-                  {{ user.role.toUpperCase() }}
+                  {{ user.role }}
                 </span>
               </td>
 
               <td class="px-6 py-5">
                 <span
-                  class="inline-flex w-10 items-center rounded-full p-0.5"
+                  class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold"
                   :class="
-                    user.active ? 'justify-end bg-blue-500/20' : 'justify-start bg-slate-300/30'
+                    user.active ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-600'
                   "
-                  :aria-label="user.active ? 'Active user' : 'Inactive user'"
                 >
-                  <span
-                    class="size-4 rounded-full shadow-sm"
-                    :class="user.active ? 'bg-blue-500' : 'bg-zinc-300'"
-                  ></span>
+                  <UIcon
+                    :name="user.active ? 'i-heroicons-check-circle' : 'i-heroicons-lock-closed'"
+                    class="size-3.5"
+                  />
+                  {{ user.active ? 'Active' : 'Locked' }}
                 </span>
               </td>
 
               <td class="px-6 py-5">
-                <p class="text-sm leading-5 text-zinc-900">{{ user.lastActivity }}</p>
+                <p class="text-sm leading-5 text-zinc-900">{{ user.createdLabel }}</p>
               </td>
 
-              <td class="px-6 py-5 text-right">
-                <BaseButton
-                  unstyled
-                  html-type="button"
-                  class="inline-flex size-9 items-center justify-center rounded-full text-gray-700 transition hover:bg-red-50 hover:text-red-700 disabled:pointer-events-none disabled:opacity-40"
-                  :loading="deletingId === user.id"
-                  :disabled="isFallbackMode || loading"
-                  :aria-label="`Delete ${user.name}`"
-                  @click="deleteUser(user)"
-                >
-                  <UIcon name="i-heroicons-trash" class="size-4" />
-                </BaseButton>
+              <td class="px-6 py-5">
+                <div class="flex items-center justify-end gap-1">
+                  <BaseButton
+                    unstyled
+                    html-type="button"
+                    class="inline-flex size-9 items-center justify-center rounded-full text-gray-700 transition hover:bg-sky-50 hover:text-sky-700"
+                    :aria-label="`Edit ${user.name}`"
+                    @click="openEdit(user)"
+                  >
+                    <UIcon name="i-heroicons-pencil-square" class="size-4" />
+                  </BaseButton>
+                  <BaseButton
+                    unstyled
+                    html-type="button"
+                    class="inline-flex size-9 items-center justify-center rounded-full text-gray-700 transition hover:bg-red-50 hover:text-red-700 disabled:pointer-events-none disabled:opacity-40"
+                    :loading="statusUpdatingId === user.id"
+                    :disabled="user.isSelf"
+                    :title="user.isSelf ? 'You cannot lock your own account' : undefined"
+                    :aria-label="user.active ? `Lock ${user.name}` : `Unlock ${user.name}`"
+                    @click="openStatus(user)"
+                  >
+                    <UIcon
+                      :name="user.active ? 'i-heroicons-lock-closed' : 'i-heroicons-lock-open'"
+                      class="size-4"
+                    />
+                  </BaseButton>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -329,14 +298,28 @@ onMounted(fetchUsers)
       </div>
 
       <BasePagination
-        :page="pagination.page.value"
-        :total-pages="pagination.totalPages.value"
-        :has-prev-page="pagination.hasPrevPage.value"
-        :has-next-page="pagination.hasNextPage.value"
+        v-if="page.totalPages > 1"
+        :page="page.page"
+        :total-pages="page.totalPages"
+        :has-prev-page="page.page > 0"
+        :has-next-page="page.page + 1 < page.totalPages"
         :loading="loading"
-        @prev="goToPrevPage"
-        @next="goToNextPage"
+        @prev="loadUsers(page.page - 1)"
+        @next="loadUsers(page.page + 1)"
       />
     </section>
+
+    <BaseButton
+      unstyled
+      html-type="button"
+      aria-label="Create user"
+      class="fixed right-6 bottom-6 z-10 inline-flex size-14 items-center justify-center rounded-full bg-sky-700 text-white shadow-lg transition hover:-translate-y-px hover:bg-sky-800 md:right-10 md:bottom-10"
+      @click="openCreate"
+    >
+      <UIcon name="i-heroicons-plus" class="size-6" />
+    </BaseButton>
+
+    <ModalUserForm v-model="formOpen" :user="editingUser" />
+    <ModalUserStatus v-model="statusOpen" :user="statusUser" />
   </div>
 </template>

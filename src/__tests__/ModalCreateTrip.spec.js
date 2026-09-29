@@ -144,7 +144,10 @@ describe('ModalCreateTrip', () => {
     userService.getAll.mockResolvedValue({
       data: {
         data: {
-          content: [{ id: 3, email: 'driver@example.com', role: 'DRIVER' }],
+          content: [
+            { id: 3, email: 'driver@example.com', role: 'DRIVER', active: true },
+            { id: 4, email: 'locked.driver@example.com', role: 'DRIVER', active: false },
+          ],
         },
       },
     })
@@ -174,7 +177,7 @@ describe('ModalCreateTrip', () => {
 
     expect(routeService.getAll).toHaveBeenCalledWith({ status: 'ACTIVE' })
     expect(busService.getAll).toHaveBeenCalled()
-    expect(userService.getAll).toHaveBeenCalledWith({ role: 'DRIVER' })
+    expect(userService.getAll).toHaveBeenCalledWith({ role: 'DRIVER', size: 100 })
     expect(wrapper.text()).toContain('Ha Noi - Hai Phong')
   })
 
@@ -199,6 +202,8 @@ describe('ModalCreateTrip', () => {
     expect(wrapper.text()).toContain('BUS-001 - 29A-12345')
     expect(wrapper.text()).not.toContain('BUS-099')
     expect(wrapper.text()).toContain('driver@example.com')
+    // Locked drivers (task 1.2) are not offered.
+    expect(wrapper.text()).not.toContain('locked.driver@example.com')
 
     await getButton(wrapper, 'Next').trigger('click')
     await flushPromises()

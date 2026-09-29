@@ -199,7 +199,8 @@ async function loadOptions() {
   const [routeResult, busResult, driverResult] = await Promise.allSettled([
     routeService.getAll({ status: 'ACTIVE' }),
     busService.getAll(),
-    userService.getAll({ role: 'DRIVER' }),
+    // Largest page /api/user allows; paging the dropdown is B31 (1.3).
+    userService.getAll({ role: 'DRIVER', size: 100 }),
   ])
 
   routes.value =
@@ -212,7 +213,10 @@ async function loadOptions() {
       : []
   drivers.value =
     driverResult.status === 'fulfilled'
-      ? getCollection(driverResult.value).map(normalizeDriver)
+      ? getCollection(driverResult.value)
+          // A locked driver cannot be assigned (task 1.2).
+          .filter((driver) => driver.active !== false)
+          .map(normalizeDriver)
       : []
 
   if (
