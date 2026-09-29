@@ -13,6 +13,13 @@ describe('API_ENDPOINTS match existing BE paths', () => {
     expect(API_ENDPOINTS.SALARY.BASE_SALARY).toBe('/base_salary')
   })
 
+  it('points the admin user endpoints at UserController (1.2), with no delete', () => {
+    expect(API_ENDPOINTS.USERS.BASE).toBe('/user')
+    expect(API_ENDPOINTS.USERS.COUNTS).toBe('/user/counts')
+    expect(API_ENDPOINTS.USERS.BY_ID(5)).toBe('/user/5')
+    expect(API_ENDPOINTS.USERS.STATUS(5)).toBe('/user/5/status')
+  })
+
   it('keeps the paths that already matched BE', () => {
     expect(API_ENDPOINTS.AUTH.LOGIN).toBe('/auth/login')
     expect(API_ENDPOINTS.AUTH.ME).toBe('/auth/me')
@@ -28,7 +35,7 @@ describe('API_ENDPOINTS match existing BE paths', () => {
   })
 
   it('leaves paths without a BE endpoint unchanged until their task builds it', () => {
-    expect(API_ENDPOINTS.USERS.BASE).toBe('/users')
+    expect(API_ENDPOINTS.USERS.PROFILE).toBe('/users/profile')
     expect(API_ENDPOINTS.TRIPS.SEARCH).toBe('/trips/search')
     expect(API_ENDPOINTS.SEATS.BY_TRIP(7)).toBe('/trips/7/seats')
     expect(API_ENDPOINTS.TICKETS.MINE).toBe('/tickets/my')

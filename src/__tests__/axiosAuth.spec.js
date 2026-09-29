@@ -8,7 +8,11 @@ const currentRoute = { value: { name: ROUTE_NAMES.TRIP_VIEW } }
 vi.mock('@/router', () => ({ default: { push, currentRoute } }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ clearSession }) }))
 
-const { default: apiClient, SESSION_ENDED_MESSAGE } = await import('@/services/axios')
+const {
+  default: apiClient,
+  SESSION_ENDED_MESSAGE,
+  ACCOUNT_LOCKED_MESSAGE,
+} = await import('@/services/axios')
 const { abortSessionRequests } = await import('@/services/sessionAbort')
 
 function rejectWith(url, status) {
@@ -105,5 +109,29 @@ describe('apiClient 401 handling', () => {
     await expect(rejectWith('/bus', 403)).rejects.toBeDefined()
 
     expect(clearSession).not.toHaveBeenCalled()
+  })
+
+  it('a 403 "account locked" ends the session like a 401 (task 1.2 D3)', async () => {
+    const onRejected = apiClient.interceptors.response.handlers[0].rejected
+    const data = { status: 403, message: ACCOUNT_LOCKED_MESSAGE }
+
+    await expect(
+      onRejected({ config: { url: '/user' }, response: { status: 403, data } })
+    ).rejects.toMatchObject(data)
+
+    expect(clearSession).toHaveBeenCalled()
+    expect(push).toHaveBeenCalledWith({ name: ROUTE_NAMES.LOGIN })
+  })
+
+  it('a 403 "account locked" from /auth/login is left to the login form', async () => {
+    const onRejected = apiClient.interceptors.response.handlers[0].rejected
+    const data = { status: 403, message: ACCOUNT_LOCKED_MESSAGE }
+
+    await expect(
+      onRejected({ config: { url: '/auth/login' }, response: { status: 403, data } })
+    ).rejects.toMatchObject({ message: ACCOUNT_LOCKED_MESSAGE })
+
+    expect(clearSession).not.toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalled()
   })
 })

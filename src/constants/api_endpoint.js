@@ -25,8 +25,10 @@ export const API_ENDPOINTS = Object.freeze({
   },
 
   USERS: {
-    BASE: '/users', // GET, POST BE: missing (1.2)
-    BY_ID: (id) => `/users/${id}`, // GET, PUT, DELETE BE: missing (1.2)
+    BASE: '/user', // GET ✓ UserController.java:30 (?role&keyword&page&size), POST ✓ :53
+    COUNTS: '/user/counts', // GET ✓ UserController.java:41
+    BY_ID: (id) => `/user/${id}`, // GET ✓ UserController.java:47, PUT ✓ :60 · no DELETE (spec 1.2 D2: lock instead)
+    STATUS: (id) => `/user/${id}/status`, // PUT ✓ UserController.java:70
     PROFILE: '/users/profile', // GET, PUT BE: missing (4.1)
   },
 

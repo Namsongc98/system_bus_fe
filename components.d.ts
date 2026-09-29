@@ -41,6 +41,8 @@ declare module 'vue' {
     ModalCreateTrip: typeof import('./src/components/common/Modal/ModalCreateTrip.vue')['default']
     ModalDeleteConfirm: typeof import('./src/components/common/Modal/ModalDeleteConfirm.vue')['default']
     ModalTripDetails: typeof import('./src/components/common/Modal/ModalTripDetails.vue')['default']
+    ModalUserForm: typeof import('./src/components/common/Modal/ModalUserForm.vue')['default']
+    ModalUserStatus: typeof import('./src/components/common/Modal/ModalUserStatus.vue')['default']
     RevenueBusTable: typeof import('./src/components/common/RevenueBusTable.vue')['default']
     RevenueDensityHeatmap: typeof import('./src/components/common/RevenueDensityHeatmap.vue')['default']
     RevenueRouteChart: typeof import('./src/components/common/RevenueRouteChart.vue')['default']

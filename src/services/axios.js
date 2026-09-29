@@ -13,6 +13,17 @@ const CREDENTIAL_ENDPOINTS = [API_ENDPOINTS.AUTH.LOGIN, API_ENDPOINTS.AUTH.REGIS
 // Shown instead of axios' raw "canceled" when a request dies with the session.
 export const SESSION_ENDED_MESSAGE = 'Phiên đăng nhập đã kết thúc, vui lòng đăng nhập lại.'
 
+// 403 message the BE sends for a locked account (AccountLockedException.MESSAGE, task 1.2 D3).
+// Unlike a role 403, it means the token is dead for good, so it ends the session like a 401.
+export const ACCOUNT_LOCKED_MESSAGE = 'Tài khoản đã bị khoá'
+
+function endsSession(error) {
+  const status = error.response?.status
+  return (
+    status === 401 || (status === 403 && error.response?.data?.message === ACCOUNT_LOCKED_MESSAGE)
+  )
+}
+
 // ─── Shared factory ───────────────────────────────────────────────────────────
 function createClient(baseURL) {
   const client = axios.create({
@@ -47,8 +58,8 @@ function createClient(baseURL) {
       }
 
       const isCredentialEndpoint = CREDENTIAL_ENDPOINTS.includes(error.config?.url)
-      if (error.response?.status === 401 && !isCredentialEndpoint) {
-        // JWT rejected: wipe the whole client session and send the user to log in again.
+      if (endsSession(error) && !isCredentialEndpoint) {
+        // JWT rejected or account locked: wipe the whole client session and send the user to log in.
         useAuthStore().clearSession()
         if (router.currentRoute.value?.name !== ROUTE_NAMES.LOGIN) {
           router.push({ name: ROUTE_NAMES.LOGIN })
