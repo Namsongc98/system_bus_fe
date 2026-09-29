@@ -1,17 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ModalCreateRoute from '@/components/common/Modal/ModalCreateRoute.vue'
-import { routeService } from '@/services/busRouteService'
 
 const toast = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
 }))
 
-vi.mock('@/services/busRouteService', () => ({
-  routeService: {
-    create: vi.fn(),
-  },
+const store = vi.hoisted(() => ({
+  saving: false,
+  createRoute: vi.fn(),
+  updateRoute: vi.fn(),
+}))
+
+vi.mock('@/stores/busRoute', () => ({
+  useBusRouteStore: () => store,
 }))
 
 vi.mock('@/composables/useToast', () => ({
@@ -67,11 +70,8 @@ async function fillValidForm(wrapper) {
 describe('ModalCreateRoute', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    routeService.create.mockResolvedValue({
-      data: {
-        data: { id: 12, routeName: 'Coastal Express Alpha' },
-      },
-    })
+    store.createRoute.mockResolvedValue({ id: 12, routeName: 'Coastal Express Alpha' })
+    store.updateRoute.mockResolvedValue({ id: 5, routeName: 'Renamed' })
   })
 
   it('renders route form fields and preview', () => {
@@ -94,7 +94,7 @@ describe('ModalCreateRoute', () => {
     expect(wrapper.text()).toContain('Enter a start point')
     expect(wrapper.text()).toContain('Enter an end point')
     expect(wrapper.text()).toContain('Enter route distance')
-    expect(routeService.create).not.toHaveBeenCalled()
+    expect(store.createRoute).not.toHaveBeenCalled()
   })
 
   it('validates route name length and positive distance', async () => {
@@ -110,7 +110,7 @@ describe('ModalCreateRoute', () => {
 
     expect(wrapper.text()).toContain('Route name must be 50 characters or less')
     expect(wrapper.text()).toContain('Distance must be greater than 0')
-    expect(routeService.create).not.toHaveBeenCalled()
+    expect(store.createRoute).not.toHaveBeenCalled()
   })
 
   it('submits an ACTIVE route payload and closes on success', async () => {
@@ -120,7 +120,7 @@ describe('ModalCreateRoute', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(routeService.create).toHaveBeenCalledWith({
+    expect(store.createRoute).toHaveBeenCalledWith({
       routeName: 'Coastal Express Alpha',
       startPoint: 'Origin Terminal',
       endPoint: 'Destination Terminal',
@@ -128,7 +128,7 @@ describe('ModalCreateRoute', () => {
       status: 'ACTIVE',
     })
     expect(toast.success).toHaveBeenCalledWith('Route created successfully')
-    expect(wrapper.emitted('created')?.[0]?.[0]).toEqual({
+    expect(wrapper.emitted('saved')?.[0]?.[0]).toEqual({
       id: 12,
       routeName: 'Coastal Express Alpha',
     })
@@ -143,7 +143,7 @@ describe('ModalCreateRoute', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(routeService.create).toHaveBeenCalledWith(
+    expect(store.createRoute).toHaveBeenCalledWith(
       expect.objectContaining({
         status: 'INACTIVE',
       })
@@ -151,7 +151,7 @@ describe('ModalCreateRoute', () => {
   })
 
   it('keeps the modal open and shows a toast when create fails', async () => {
-    routeService.create.mockRejectedValueOnce(new Error('Create route failed'))
+    store.createRoute.mockRejectedValueOnce(new Error('Create route failed'))
     const wrapper = mountModal()
 
     await fillValidForm(wrapper)
@@ -159,7 +159,52 @@ describe('ModalCreateRoute', () => {
     await flushPromises()
 
     expect(toast.error).toHaveBeenCalledWith('Create route failed')
-    expect(wrapper.emitted('created')).toBeUndefined()
+    expect(wrapper.emitted('saved')).toBeUndefined()
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('rejects the same start and end point, ignoring case and spaces', async () => {
+    const wrapper = mountModal()
+    const inputs = wrapper.findAll('input')
+
+    await inputs[0].setValue('Loop')
+    await inputs[1].setValue('Hà Nội')
+    await inputs[2].setValue(' hà nội ')
+    await inputs[3].setValue('10')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('End point must differ from the start point')
+    expect(store.createRoute).not.toHaveBeenCalled()
+  })
+
+  it('prefills the form in edit mode and calls updateRoute', async () => {
+    const wrapper = mountModal({
+      route: {
+        id: 5,
+        routeName: 'HN - HP',
+        startPoint: 'Hà Nội',
+        endPoint: 'Hải Phòng',
+        distanceKm: 120,
+        status: 'INACTIVE',
+      },
+    })
+
+    expect(wrapper.text()).toContain('Edit Route')
+    const inputs = wrapper.findAll('input')
+    expect(inputs[0].element.value).toBe('HN - HP')
+    await inputs[0].setValue('Renamed')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(store.updateRoute).toHaveBeenCalledWith(5, {
+      routeName: 'Renamed',
+      startPoint: 'Hà Nội',
+      endPoint: 'Hải Phòng',
+      distanceKm: 120,
+      status: 'INACTIVE',
+    })
+    expect(store.createRoute).not.toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('Route updated successfully')
   })
 })

@@ -1,17 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ModalCreateBus from '@/components/common/Modal/ModalCreateBus.vue'
-import { busService } from '@/services/busRouteService'
 
 const toast = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
 }))
 
-vi.mock('@/services/busRouteService', () => ({
-  busService: {
-    create: vi.fn(),
-  },
+const store = vi.hoisted(() => ({
+  saving: false,
+  createBus: vi.fn(),
+  updateBus: vi.fn(),
+}))
+
+vi.mock('@/stores/busRoute', () => ({
+  useBusRouteStore: () => store,
 }))
 
 vi.mock('@/composables/useToast', () => ({
@@ -40,7 +43,7 @@ function mountModal(props = {}) {
           },
           emits: ['click'],
           template:
-            '<button :type="htmlType || type || `button`" :disabled="disabled || loading" @click="$emit(`click`)"><slot name="icon-left" /><slot /></button>',
+            '<button v-bind="$attrs" :type="htmlType || type || `button`" :disabled="disabled || loading" @click="$emit(`click`)"><slot name="icon-left" /><slot /></button>',
         },
         BaseInput: {
           props: ['modelValue', 'type', 'label', 'placeholder', 'error', 'disabled'],
@@ -58,75 +61,82 @@ function mountModal(props = {}) {
 
 async function fillValidForm(wrapper) {
   const inputs = wrapper.findAll('input')
-  await inputs[0].setValue('BUS-002')
-  await inputs[1].setValue('30B-67890')
-  await inputs[2].setValue('45')
+  await inputs[0].setValue('30B-67890')
+  await inputs[1].setValue('45')
+}
+
+function statusButton(wrapper, label) {
+  return wrapper.findAll('button').find((button) => button.text() === label)
 }
 
 describe('ModalCreateBus', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    busService.create.mockResolvedValue({
-      data: {
-        data: { id: 7, busNumber: 'BUS-002' },
-      },
-    })
+    store.createBus.mockResolvedValue({ id: 7, plateNumber: '30B-67890' })
+    store.updateBus.mockResolvedValue({ id: 3, plateNumber: '30B-00003' })
   })
 
-  it('renders bus form fields and preview', () => {
+  it('renders bus form fields and preview without a bus number field', () => {
     const wrapper = mountModal()
 
     expect(wrapper.text()).toContain('Add New Bus')
-    expect(wrapper.text()).toContain('Bus Number')
     expect(wrapper.text()).toContain('Plate Number')
     expect(wrapper.text()).toContain('Operational Status')
     expect(wrapper.text()).toContain('Seat Capacity')
     expect(wrapper.text()).toContain('Layout Preview')
+    expect(wrapper.text()).not.toContain('Bus Number')
+    expect(wrapper.findAll('input')).toHaveLength(2)
+  })
+
+  it('offers only Available and Maintenance when creating (IN_USE is system-set)', () => {
+    const wrapper = mountModal()
+
+    expect(statusButton(wrapper, 'Available')).toBeTruthy()
+    expect(statusButton(wrapper, 'Maintenance')).toBeTruthy()
+    expect(statusButton(wrapper, 'In use')).toBeUndefined()
   })
 
   it('shows validation errors for missing required fields', async () => {
     const wrapper = mountModal()
     const inputs = wrapper.findAll('input')
-    await inputs[2].setValue('')
+    await inputs[1].setValue('')
 
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Enter a bus number')
-    expect(wrapper.text()).toContain('Enter a license plate')
+    expect(wrapper.text()).toContain('Enter a plate number')
     expect(wrapper.text()).toContain('Enter seat capacity')
-    expect(busService.create).not.toHaveBeenCalled()
+    expect(store.createBus).not.toHaveBeenCalled()
   })
 
-  it('validates capacity greater than zero', async () => {
+  it('validates plate length and capacity greater than zero', async () => {
     const wrapper = mountModal()
     const inputs = wrapper.findAll('input')
 
-    await inputs[0].setValue('BUS-002')
-    await inputs[1].setValue('30B-67890')
-    await inputs[2].setValue('0')
+    await inputs[0].setValue('X'.repeat(21))
+    await inputs[1].setValue('0')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Capacity must be greater than 0')
-    expect(busService.create).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Plate number must be 20 characters or less')
+    expect(wrapper.text()).toContain('Capacity must be a whole number greater than 0')
+    expect(store.createBus).not.toHaveBeenCalled()
   })
 
-  it('submits the correct AVAILABLE bus payload and closes on success', async () => {
+  it('submits { plateNumber, capacity, status } and closes on success', async () => {
     const wrapper = mountModal()
 
     await fillValidForm(wrapper)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(busService.create).toHaveBeenCalledWith({
-      busNumber: 'BUS-002',
-      licensePlate: '30B-67890',
+    expect(store.createBus).toHaveBeenCalledWith({
+      plateNumber: '30B-67890',
       capacity: 45,
       status: 'AVAILABLE',
     })
     expect(toast.success).toHaveBeenCalledWith('Bus created successfully')
-    expect(wrapper.emitted('created')?.[0]?.[0]).toEqual({ id: 7, busNumber: 'BUS-002' })
+    expect(wrapper.emitted('saved')?.[0]?.[0]).toEqual({ id: 7, plateNumber: '30B-67890' })
     expect(wrapper.emitted('update:modelValue')).toContainEqual([false])
   })
 
@@ -134,30 +144,101 @@ describe('ModalCreateBus', () => {
     const wrapper = mountModal()
 
     await fillValidForm(wrapper)
-    await wrapper
-      .findAll('button')
-      .find((button) => button.text() === 'Maintenance')
-      .trigger('click')
+    await statusButton(wrapper, 'Maintenance').trigger('click')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(busService.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        status: 'MAINTENANCE',
-      })
-    )
+    expect(store.createBus).toHaveBeenCalledWith(expect.objectContaining({ status: 'MAINTENANCE' }))
   })
 
-  it('keeps the modal open and shows a toast when create fails', async () => {
-    busService.create.mockRejectedValueOnce(new Error('Create bus failed'))
+  it('keeps the modal open and toasts the BE message when saving fails (409)', async () => {
+    store.createBus.mockRejectedValueOnce(new Error('Biển số xe đã tồn tại: 30B-67890'))
     const wrapper = mountModal()
 
     await fillValidForm(wrapper)
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(toast.error).toHaveBeenCalledWith('Create bus failed')
-    expect(wrapper.emitted('created')).toBeUndefined()
+    expect(toast.error).toHaveBeenCalledWith('Biển số xe đã tồn tại: 30B-67890')
+    expect(wrapper.emitted('saved')).toBeUndefined()
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('prefills the form in edit mode and calls updateBus', async () => {
+    const wrapper = mountModal({
+      bus: { id: 3, plateNumber: '30B-00003', capacity: 29, status: 'MAINTENANCE' },
+    })
+
+    expect(wrapper.text()).toContain('Edit Bus')
+    const inputs = wrapper.findAll('input')
+    expect(inputs[0].element.value).toBe('30B-00003')
+    await inputs[1].setValue('30')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(store.updateBus).toHaveBeenCalledWith(3, {
+      plateNumber: '30B-00003',
+      capacity: 30,
+      status: 'MAINTENANCE',
+    })
+    expect(store.createBus).not.toHaveBeenCalled()
+    expect(toast.success).toHaveBeenCalledWith('Bus updated successfully')
+  })
+
+  it('shows IN_USE read-only on an IN_USE bus and keeps it by default', async () => {
+    const wrapper = mountModal({
+      bus: { id: 3, plateNumber: '30B-00003', capacity: 29, status: 'IN_USE' },
+    })
+
+    expect(statusButton(wrapper, 'In use').attributes('disabled')).toBeDefined()
+    expect(statusButton(wrapper, 'In use').attributes('aria-checked')).toBe('true')
+    expect(wrapper.text()).toContain('In use is set by the system')
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(store.updateBus).toHaveBeenCalledWith(3, expect.objectContaining({ status: 'IN_USE' }))
+  })
+
+  it('lets the admin free an IN_USE bus once its trip has ended (BE decides with 409)', async () => {
+    store.updateBus.mockRejectedValueOnce(
+      new Error('Xe 30B-00003 đang chạy chuyến, không thể đổi trạng thái')
+    )
+    const wrapper = mountModal({
+      bus: { id: 3, plateNumber: '30B-00003', capacity: 29, status: 'IN_USE' },
+    })
+
+    await statusButton(wrapper, 'Maintenance').trigger('click')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(store.updateBus).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({ status: 'MAINTENANCE' })
+    )
+    expect(toast.error).toHaveBeenCalledWith(
+      'Xe 30B-00003 đang chạy chuyến, không thể đổi trạng thái'
+    )
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('exposes the status options as a radio group', () => {
+    const wrapper = mountModal()
+
+    expect(wrapper.find('[role="radiogroup"]').attributes('aria-labelledby')).toBe(
+      'bus-status-label'
+    )
+    expect(statusButton(wrapper, 'Available').attributes('aria-checked')).toBe('true')
+    expect(statusButton(wrapper, 'Maintenance').attributes('aria-checked')).toBe('false')
+  })
+
+  it('cannot be closed while a save is in flight', async () => {
+    store.saving = true
+    const wrapper = mountModal()
+
+    await wrapper.get('[aria-label="Close bus modal"]').trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    store.saving = false
   })
 })

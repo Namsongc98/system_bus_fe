@@ -1,29 +1,33 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import BaseButton from '@/components/elements/BaseButton.vue'
 import BaseInput from '@/components/elements/BaseInput.vue'
 import { useToast } from '@/composables/useToast'
-import { busService } from '@/services/busRouteService'
+import { useBusRouteStore } from '@/stores/busRoute'
 
+// BusStatus (spec review 1.1 D1): IN_USE is set by the system when a trip is created,
+// so an admin can only pick AVAILABLE or MAINTENANCE; IN_USE is shown read-only.
 const BUS_STATUS_OPTIONS = [
-  { label: 'Active', value: 'AVAILABLE' },
-  { label: 'Inactive', value: 'IN_USE' },
-  { label: 'Maintenance', value: 'MAINTENANCE' },
+  { label: 'Available', value: 'AVAILABLE', selectable: true },
+  { label: 'In use', value: 'IN_USE', selectable: false },
+  { label: 'Maintenance', value: 'MAINTENANCE', selectable: true },
 ]
+const PLATE_MAX_LENGTH = 20
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
+  // BusResponse to edit; null opens the modal in create mode.
+  bus: { type: Object, default: null },
 })
 
-const emit = defineEmits(['update:modelValue', 'close', 'created'])
+const emit = defineEmits(['update:modelValue', 'close', 'saved'])
 
 const toast = useToast()
-const creating = ref(false)
+const store = useBusRouteStore()
 const errors = reactive({})
 const form = reactive({
-  busNumber: '',
-  licensePlate: '',
+  plateNumber: '',
   capacity: 42,
   status: 'AVAILABLE',
 })
@@ -31,11 +35,19 @@ const form = reactive({
 const isOpen = computed({
   get: () => props.modelValue,
   set: (value) => {
+    // Escape / overlay must not close the modal while a save is in flight.
+    if (!value && store.saving) return
     emit('update:modelValue', value)
     if (!value) emit('close')
   },
 })
 
+const isEdit = computed(() => !!props.bus?.id)
+const saving = computed(() => store.saving)
+const isInUse = computed(() => isEdit.value && props.bus?.status === 'IN_USE')
+const visibleStatusOptions = computed(() =>
+  BUS_STATUS_OPTIONS.filter((option) => option.selectable || isInUse.value)
+)
 const statusOption = computed(
   () => BUS_STATUS_OPTIONS.find((option) => option.value === form.status) || BUS_STATUS_OPTIONS[0]
 )
@@ -61,30 +73,43 @@ function clearErrors() {
 function validateForm() {
   clearErrors()
 
-  if (!form.busNumber.trim()) errors.busNumber = 'Enter a bus number'
-  if (!form.licensePlate.trim()) errors.licensePlate = 'Enter a license plate'
+  const plateNumber = form.plateNumber.trim()
+  if (!plateNumber) errors.plateNumber = 'Enter a plate number'
+  else if (plateNumber.length > PLATE_MAX_LENGTH)
+    errors.plateNumber = `Plate number must be ${PLATE_MAX_LENGTH} characters or less`
 
   const capacity = Number(form.capacity)
-  if (!form.capacity) {
+  if (form.capacity === '' || form.capacity === null) {
     errors.capacity = 'Enter seat capacity'
-  } else if (!Number.isFinite(capacity) || capacity <= 0) {
-    errors.capacity = 'Capacity must be greater than 0'
+  } else if (!Number.isInteger(capacity) || capacity <= 0) {
+    errors.capacity = 'Capacity must be a whole number greater than 0'
   }
 
-  if (!BUS_STATUS_OPTIONS.some((option) => option.value === form.status)) {
+  // An IN_USE bus may keep IN_USE or be freed; the BE answers 409 while its trip is unfinished.
+  const allowed = isInUse.value
+    ? ['IN_USE', 'AVAILABLE', 'MAINTENANCE']
+    : ['AVAILABLE', 'MAINTENANCE']
+  if (!allowed.includes(form.status)) {
     errors.status = 'Select an operational status'
   }
 
   return !Object.keys(errors).length
 }
 
-function resetForm() {
-  form.busNumber = ''
-  form.licensePlate = ''
-  form.capacity = 42
-  form.status = 'AVAILABLE'
+function fillForm() {
+  form.plateNumber = props.bus?.plateNumber ?? ''
+  form.capacity = props.bus?.capacity ?? 42
+  form.status = props.bus?.status ?? 'AVAILABLE'
   clearErrors()
 }
+
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (open) fillForm()
+  },
+  { immediate: true }
+)
 
 function closeModal() {
   isOpen.value = false
@@ -93,25 +118,22 @@ function closeModal() {
 async function submitBus() {
   if (!validateForm()) return
 
-  creating.value = true
+  const payload = {
+    plateNumber: form.plateNumber.trim(),
+    capacity: Number(form.capacity),
+    status: form.status,
+  }
 
   try {
-    const response = await busService.create({
-      busNumber: form.busNumber.trim(),
-      licensePlate: form.licensePlate.trim(),
-      capacity: Number(form.capacity),
-      status: form.status,
-    })
-
-    const createdBus = response?.data?.data ?? response?.data ?? response
-    toast.success('Bus created successfully')
-    resetForm()
+    const saved = isEdit.value
+      ? await store.updateBus(props.bus.id, payload)
+      : await store.createBus(payload)
+    toast.success(isEdit.value ? 'Bus updated successfully' : 'Bus created successfully')
     isOpen.value = false
-    emit('created', createdBus)
+    emit('saved', saved)
   } catch (err) {
-    toast.error(err?.message || 'Unable to create bus')
-  } finally {
-    creating.value = false
+    // Keep the modal open so the admin can fix the input (409 duplicate plate, 400 validation).
+    toast.error(err?.message || 'Unable to save bus')
   }
 }
 </script>
@@ -132,9 +154,15 @@ async function submitBus() {
             <UIcon name="i-heroicons-truck" class="size-6" />
           </div>
           <div class="min-w-0">
-            <h2 class="text-xl leading-6 font-bold text-zinc-900">Add New Bus</h2>
+            <h2 class="text-xl leading-6 font-bold text-zinc-900">
+              {{ isEdit ? 'Edit Bus' : 'Add New Bus' }}
+            </h2>
             <p class="mt-1 text-sm leading-5 text-gray-700">
-              Register a new vehicle to the Fluid Voyager fleet
+              {{
+                isEdit
+                  ? 'Update this vehicle in the Fluid Voyager fleet'
+                  : 'Register a new vehicle to the Fluid Voyager fleet'
+              }}
             </p>
           </div>
         </div>
@@ -142,7 +170,7 @@ async function submitBus() {
           unstyled
           html-type="button"
           class="flex size-10 shrink-0 items-center justify-center rounded-full text-gray-700 transition hover:bg-stone-100"
-          aria-label="Close create bus modal"
+          aria-label="Close bus modal"
           @click="closeModal"
         >
           <UIcon name="i-heroicons-x-mark" class="size-5" />
@@ -164,7 +192,7 @@ async function submitBus() {
                 Plate Number
               </p>
               <p class="truncate text-2xl leading-8 font-black text-zinc-900">
-                {{ form.licensePlate || 'FV-0000-XX' }}
+                {{ form.plateNumber || 'FV-0000-XX' }}
               </p>
               <div class="mt-1 flex items-center gap-2 text-sm leading-5 font-medium text-gray-700">
                 <UIcon name="i-heroicons-users" class="size-4 text-sky-700" />
@@ -188,24 +216,11 @@ async function submitBus() {
 
         <div class="flex flex-col gap-6">
           <BaseInput
-            v-model="form.busNumber"
-            label="Bus Number"
-            placeholder="BUS-002"
-            :disabled="creating"
-            :error="errors.busNumber"
-            :ui="{ base: 'bg-stone-100 px-4 py-3.5' }"
-          >
-            <template #trailing>
-              <UIcon name="i-heroicons-hashtag" class="size-4 text-slate-300" />
-            </template>
-          </BaseInput>
-
-          <BaseInput
-            v-model="form.licensePlate"
+            v-model="form.plateNumber"
             label="Plate Number"
             placeholder="FV-0000-XX"
-            :disabled="creating"
-            :error="errors.licensePlate"
+            :disabled="saving"
+            :error="errors.plateNumber"
             :ui="{ base: 'bg-stone-100 px-4 py-3.5 font-mono' }"
           >
             <template #trailing>
@@ -214,16 +229,26 @@ async function submitBus() {
           </BaseInput>
 
           <div class="flex flex-col gap-2">
-            <span class="text-xs leading-4 font-bold tracking-wider text-gray-700 uppercase">
+            <span
+              id="bus-status-label"
+              class="text-xs leading-4 font-bold tracking-wider text-gray-700 uppercase"
+            >
               Operational Status
             </span>
-            <div class="grid grid-cols-3 gap-1 bg-stone-200 p-1">
+            <div
+              role="radiogroup"
+              aria-labelledby="bus-status-label"
+              class="grid gap-1 bg-stone-200 p-1"
+              :class="visibleStatusOptions.length === 3 ? 'grid-cols-3' : 'grid-cols-2'"
+            >
               <BaseButton
-                v-for="option in BUS_STATUS_OPTIONS"
+                v-for="option in visibleStatusOptions"
                 :key="option.value"
                 unstyled
                 html-type="button"
-                :disabled="creating"
+                role="radio"
+                :aria-checked="form.status === option.value"
+                :disabled="saving || !option.selectable"
                 class="rounded-xl px-3 py-2.5 text-center text-sm leading-5 transition disabled:opacity-60"
                 :class="
                   form.status === option.value
@@ -235,6 +260,10 @@ async function submitBus() {
                 {{ option.label }}
               </BaseButton>
             </div>
+            <span v-if="isInUse" class="text-xs text-gray-500">
+              In use is set by the system while the bus runs a trip. Once its trip has ended you can
+              move it to Available or Maintenance.
+            </span>
             <span v-if="errors.status" class="text-xs text-red-500">{{ errors.status }}</span>
           </div>
 
@@ -252,7 +281,7 @@ async function submitBus() {
               v-model="form.capacity"
               type="number"
               placeholder="42"
-              :disabled="creating"
+              :disabled="saving"
               :error="errors.capacity"
               :ui="{ base: 'bg-stone-100 px-4 py-3.5' }"
             >
@@ -283,14 +312,14 @@ async function submitBus() {
       <footer
         class="flex flex-col-reverse gap-3 px-6 pt-4 pb-6 sm:flex-row sm:justify-end md:px-8 md:pb-8"
       >
-        <BaseButton type="secondary" html-type="button" :disabled="creating" @click="closeModal">
+        <BaseButton type="secondary" html-type="button" :disabled="saving" @click="closeModal">
           Cancel
         </BaseButton>
-        <BaseButton html-type="submit" :loading="creating">
+        <BaseButton html-type="submit" :loading="saving">
           <template #icon-left>
-            <UIcon name="i-heroicons-plus" class="size-4" />
+            <UIcon :name="isEdit ? 'i-heroicons-check' : 'i-heroicons-plus'" class="size-4" />
           </template>
-          Add Bus
+          {{ isEdit ? 'Save Changes' : 'Add Bus' }}
         </BaseButton>
       </footer>
     </form>

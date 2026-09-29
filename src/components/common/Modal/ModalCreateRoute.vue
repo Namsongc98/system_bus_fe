@@ -1,20 +1,22 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import BaseButton from '@/components/elements/BaseButton.vue'
 import BaseInput from '@/components/elements/BaseInput.vue'
 import StatusToggle from '@/components/common/StatusToggle.vue'
 import { useToast } from '@/composables/useToast'
-import { routeService } from '@/services/busRouteService'
+import { useBusRouteStore } from '@/stores/busRoute'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
+  // RouteResponse to edit; null opens the modal in create mode.
+  route: { type: Object, default: null },
 })
 
-const emit = defineEmits(['update:modelValue', 'close', 'created'])
+const emit = defineEmits(['update:modelValue', 'close', 'saved'])
 
 const toast = useToast()
-const creating = ref(false)
+const store = useBusRouteStore()
 const errors = reactive({})
 const form = reactive({
   routeName: '',
@@ -27,11 +29,15 @@ const form = reactive({
 const isOpen = computed({
   get: () => props.modelValue,
   set: (value) => {
+    // Escape / overlay must not close the modal while a save is in flight.
+    if (!value && store.saving) return
     emit('update:modelValue', value)
     if (!value) emit('close')
   },
 })
 
+const isEdit = computed(() => !!props.route?.id)
+const saving = computed(() => store.saving)
 const routeNameCount = computed(() => form.routeName.length)
 const previewDistance = computed(() => {
   const distance = Number(form.distanceKm)
@@ -51,25 +57,42 @@ function validateForm() {
   if (form.routeName.length > 50) errors.routeName = 'Route name must be 50 characters or less'
   if (!form.startPoint.trim()) errors.startPoint = 'Enter a start point'
   if (!form.endPoint.trim()) errors.endPoint = 'Enter an end point'
+  // Same rule as the BE (RouteService): compare trimmed, case-insensitive.
+  if (
+    form.startPoint.trim() &&
+    form.startPoint.trim().toLowerCase() === form.endPoint.trim().toLowerCase()
+  ) {
+    errors.endPoint = 'End point must differ from the start point'
+  }
 
   const distance = Number(form.distanceKm)
-  if (!form.distanceKm) {
+  if (form.distanceKm === '' || form.distanceKm === null) {
     errors.distanceKm = 'Enter route distance'
   } else if (!Number.isFinite(distance) || distance <= 0) {
     errors.distanceKm = 'Distance must be greater than 0'
+  } else if (distance >= 10000) {
+    errors.distanceKm = 'Distance must be less than 10000 km'
   }
 
   return !Object.keys(errors).length
 }
 
-function resetForm() {
-  form.routeName = ''
-  form.startPoint = ''
-  form.endPoint = ''
-  form.distanceKm = ''
-  form.active = true
+function fillForm() {
+  form.routeName = props.route?.routeName ?? ''
+  form.startPoint = props.route?.startPoint ?? ''
+  form.endPoint = props.route?.endPoint ?? ''
+  form.distanceKm = props.route?.distanceKm ?? ''
+  form.active = props.route ? props.route.status !== 'INACTIVE' : true
   clearErrors()
 }
+
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (open) fillForm()
+  },
+  { immediate: true }
+)
 
 function closeModal() {
   isOpen.value = false
@@ -78,26 +101,23 @@ function closeModal() {
 async function submitRoute() {
   if (!validateForm()) return
 
-  creating.value = true
+  const payload = {
+    routeName: form.routeName.trim(),
+    startPoint: form.startPoint.trim(),
+    endPoint: form.endPoint.trim(),
+    distanceKm: Number(form.distanceKm),
+    status: form.active ? 'ACTIVE' : 'INACTIVE',
+  }
 
   try {
-    const response = await routeService.create({
-      routeName: form.routeName.trim(),
-      startPoint: form.startPoint.trim(),
-      endPoint: form.endPoint.trim(),
-      distanceKm: Number(form.distanceKm),
-      status: form.active ? 'ACTIVE' : 'INACTIVE',
-    })
-
-    const createdRoute = response?.data?.data ?? response?.data ?? response
-    toast.success('Route created successfully')
-    resetForm()
+    const saved = isEdit.value
+      ? await store.updateRoute(props.route.id, payload)
+      : await store.createRoute(payload)
+    toast.success(isEdit.value ? 'Route updated successfully' : 'Route created successfully')
     isOpen.value = false
-    emit('created', createdRoute)
+    emit('saved', saved)
   } catch (err) {
-    toast.error(err?.message || 'Unable to create route')
-  } finally {
-    creating.value = false
+    toast.error(err?.message || 'Unable to save route')
   }
 }
 </script>
@@ -115,16 +135,22 @@ async function submitRoute() {
           <UIcon name="i-heroicons-map" class="size-5" />
         </div>
         <div class="min-w-0 flex-1">
-          <h2 class="text-xl leading-7 font-bold text-zinc-900">Create New Route</h2>
+          <h2 class="text-xl leading-7 font-bold text-zinc-900">
+            {{ isEdit ? 'Edit Route' : 'Create New Route' }}
+          </h2>
           <p class="text-sm leading-5 text-gray-700">
-            Define a new transport corridor for the fleet
+            {{
+              isEdit
+                ? 'Update this transport corridor'
+                : 'Define a new transport corridor for the fleet'
+            }}
           </p>
         </div>
         <BaseButton
           unstyled
           html-type="button"
           class="flex size-10 shrink-0 items-center justify-center rounded-full text-gray-700 transition hover:bg-stone-100"
-          aria-label="Close create route modal"
+          aria-label="Close route modal"
           @click="closeModal"
         >
           <UIcon name="i-heroicons-x-mark" class="size-5" />
@@ -148,7 +174,7 @@ async function submitRoute() {
             id="route-name"
             v-model="form.routeName"
             placeholder="e.g. Coastal Express Alpha"
-            :disabled="creating"
+            :disabled="saving"
             :error="errors.routeName"
             :ui="{ base: 'rounded-none bg-stone-100 px-4 py-3.5' }"
           />
@@ -161,7 +187,7 @@ async function submitRoute() {
               v-model="form.startPoint"
               label="Start Point"
               placeholder="Origin Terminal"
-              :disabled="creating"
+              :disabled="saving"
               :error="errors.startPoint"
               :ui="{ base: 'bg-white px-4 py-3' }"
             >
@@ -178,7 +204,7 @@ async function submitRoute() {
               v-model="form.endPoint"
               label="End Point"
               placeholder="Destination Terminal"
-              :disabled="creating"
+              :disabled="saving"
               :error="errors.endPoint"
               :ui="{ base: 'bg-white px-4 py-3' }"
             >
@@ -195,7 +221,7 @@ async function submitRoute() {
             type="number"
             label="Distance"
             placeholder="0.0"
-            :disabled="creating"
+            :disabled="saving"
             :error="errors.distanceKm"
             :ui="{ base: 'bg-stone-100 px-4 py-3' }"
           >
@@ -204,7 +230,7 @@ async function submitRoute() {
             </template>
           </BaseInput>
 
-          <StatusToggle v-model="form.active" label="Route Status" :disabled="creating" />
+          <StatusToggle v-model="form.active" label="Route Status" :disabled="saving" />
         </div>
 
         <section
@@ -250,11 +276,11 @@ async function submitRoute() {
       <footer
         class="flex flex-col-reverse gap-3 border-t border-slate-300/10 px-6 py-5 sm:flex-row sm:justify-end md:px-8"
       >
-        <BaseButton type="secondary" html-type="button" :disabled="creating" @click="closeModal">
+        <BaseButton type="secondary" html-type="button" :disabled="saving" @click="closeModal">
           Cancel
         </BaseButton>
-        <BaseButton html-type="submit" :loading="creating">
-          Create Route
+        <BaseButton html-type="submit" :loading="saving">
+          {{ isEdit ? 'Save Changes' : 'Create Route' }}
           <template #icon-right>
             <UIcon name="i-heroicons-arrow-right" class="size-4" />
           </template>

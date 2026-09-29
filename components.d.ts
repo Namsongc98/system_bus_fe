@@ -39,7 +39,7 @@ declare module 'vue' {
     ModalCreateBus: typeof import('./src/components/common/Modal/ModalCreateBus.vue')['default']
     ModalCreateRoute: typeof import('./src/components/common/Modal/ModalCreateRoute.vue')['default']
     ModalCreateTrip: typeof import('./src/components/common/Modal/ModalCreateTrip.vue')['default']
-    ModalDeleteRoute: typeof import('./src/components/common/Modal/ModalDeleteRoute.vue')['default']
+    ModalDeleteConfirm: typeof import('./src/components/common/Modal/ModalDeleteConfirm.vue')['default']
     ModalTripDetails: typeof import('./src/components/common/Modal/ModalTripDetails.vue')['default']
     RevenueBusTable: typeof import('./src/components/common/RevenueBusTable.vue')['default']
     RevenueDensityHeatmap: typeof import('./src/components/common/RevenueDensityHeatmap.vue')['default']
