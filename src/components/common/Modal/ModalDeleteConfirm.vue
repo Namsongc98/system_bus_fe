@@ -13,6 +13,7 @@ import { useToast } from '@/composables/useToast'
 const ENTITY_LABELS = {
   route: { title: 'Route', noun: 'route' },
   bus: { title: 'Bus', noun: 'bus' },
+  trip: { title: 'Trip', noun: 'trip' },
 }
 
 const props = defineProps({
@@ -20,9 +21,9 @@ const props = defineProps({
   entityType: {
     type: String,
     required: true,
-    validator: (value) => ['route', 'bus'].includes(value),
+    validator: (value) => ['route', 'bus', 'trip'].includes(value),
   },
-  // The exact text the admin must type (route name, plate number).
+  // The exact text the admin must type (route name, plate number, trip code).
   entityName: { type: String, default: '' },
   // Async delete action; a rejection keeps the modal open and toasts its message.
   onConfirm: { type: Function, required: true },

@@ -6,9 +6,15 @@ import BaseButton from '@/components/elements/BaseButton.vue'
 import BaseEmptyState from '@/components/elements/BaseEmptyState.vue'
 import BaseInput from '@/components/elements/BaseInput.vue'
 import { useToast } from '@/composables/useToast'
-import { busService, routeService } from '@/services/busRouteService'
-import { userService } from '@/services/userService'
 import { useTripStore } from '@/stores/trip'
+
+// Form fields validated on each step.
+const STEP_FIELDS = {
+  route: ['routeId'],
+  resources: ['busId', 'driverId'],
+  schedule: ['departureTime', 'arrivalTime'],
+  review: [],
+}
 
 const WIZARD_STEPS = [
   { key: 'route', label: 'Route' },
@@ -19,12 +25,14 @@ const WIZARD_STEPS = [
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
+  // TripResponse to edit (spec review 1.3 S19); null opens the wizard in create mode.
+  trip: { type: Object, default: null },
 })
 
-const emit = defineEmits(['update:modelValue', 'close', 'created'])
+const emit = defineEmits(['update:modelValue', 'close', 'saved'])
 
 const tripStore = useTripStore()
-const { loading: creating } = storeToRefs(tripStore)
+const { saving: creating } = storeToRefs(tripStore)
 const toast = useToast()
 
 const currentStep = ref('route')
@@ -35,6 +43,8 @@ const routes = ref([])
 const buses = ref([])
 const drivers = ref([])
 const errors = reactive({})
+// BE refusal on submit (409 overlap, 400 past departure…), shown on the Review step.
+const submitError = ref('')
 const form = reactive({
   routeId: '',
   busId: '',
@@ -46,10 +56,14 @@ const form = reactive({
 const isOpen = computed({
   get: () => props.modelValue,
   set: (value) => {
+    // Escape / overlay must not close the wizard while a save is in flight.
+    if (!value && creating.value) return
     emit('update:modelValue', value)
     if (!value) emit('close')
   },
 })
+
+const isEdit = computed(() => !!props.trip?.id)
 
 const currentStepIndex = computed(() =>
   Math.max(
@@ -60,31 +74,46 @@ const currentStepIndex = computed(() =>
 const isReviewStep = computed(() => currentStep.value === 'review')
 const canNavigate = computed(() => !optionsLoading.value && !creating.value)
 
+// Edit mode: the trip's current route / bus / driver stay selectable-looking even when they are no
+// longer offered (inactive route, bus in maintenance, locked driver), marked "(unavailable)", so the
+// select is not blank and the BE refusal makes sense.
+function withCurrent(list, current, normalize) {
+  if (!isEdit.value || !current?.id || list.some((item) => sameId(item.id, current.id))) return list
+  const option = normalize(current, 0)
+  return [{ ...option, label: `${option.label} (unavailable)` }, ...list]
+}
+
+const routeList = computed(() => withCurrent(routes.value, props.trip?.route, normalizeRoute))
+const busList = computed(() => withCurrent(buses.value, props.trip?.bus, normalizeBus))
+const driverList = computed(() => withCurrent(drivers.value, props.trip?.driver, normalizeDriver))
+
 const routeOptions = computed(() =>
-  routes.value.map((route) => ({
+  routeList.value.map((route) => ({
     label: route.label,
     value: route.id,
   }))
 )
 
 const busOptions = computed(() =>
-  buses.value.map((bus) => ({
+  busList.value.map((bus) => ({
     label: bus.label,
     value: bus.id,
   }))
 )
 
 const driverOptions = computed(() =>
-  drivers.value.map((driver) => ({
+  driverList.value.map((driver) => ({
     label: driver.label,
     value: driver.id,
   }))
 )
 
-const selectedRoute = computed(() => routes.value.find((route) => sameId(route.id, form.routeId)))
-const selectedBus = computed(() => buses.value.find((bus) => sameId(bus.id, form.busId)))
+const selectedRoute = computed(() =>
+  routeList.value.find((route) => sameId(route.id, form.routeId))
+)
+const selectedBus = computed(() => busList.value.find((bus) => sameId(bus.id, form.busId)))
 const selectedDriver = computed(() =>
-  drivers.value.find((driver) => sameId(driver.id, form.driverId))
+  driverList.value.find((driver) => sameId(driver.id, form.driverId))
 )
 
 const durationLabel = computed(() => {
@@ -116,19 +145,6 @@ function resolveOptionValue(options, value) {
 
 function firstDefined(...values) {
   return values.find((value) => value !== undefined && value !== null && value !== '')
-}
-
-function getPayload(response) {
-  return response?.data?.data ?? response?.data ?? response
-}
-
-function getCollection(response) {
-  const payload = getPayload(response)
-  if (Array.isArray(payload)) return payload
-  if (Array.isArray(payload?.content)) return payload.content
-  if (Array.isArray(payload?.items)) return payload.items
-  if (Array.isArray(payload?.data)) return payload.data
-  return []
 }
 
 function normalizeRoute(route, index) {
@@ -196,42 +212,37 @@ async function loadOptions() {
   optionsLoading.value = true
   optionsError.value = ''
 
-  const [routeResult, busResult, driverResult] = await Promise.allSettled([
-    routeService.getAll({ status: 'ACTIVE' }),
-    busService.getAll(),
-    // Largest page /api/user allows; paging the dropdown is B31 (1.3).
-    userService.getAll({ role: 'DRIVER', size: 100 }),
-  ])
+  // finally: whatever happens, the wizard must not stay disabled (B37 d).
+  try {
+    // A null list is a failed request (the store keeps the service calls, B35 e).
+    const options = await tripStore.fetchFormOptions()
+    const failed = !options.routes || !options.buses || !options.drivers
 
-  routes.value =
-    routeResult.status === 'fulfilled' ? getCollection(routeResult.value).map(normalizeRoute) : []
-  buses.value =
-    busResult.status === 'fulfilled'
-      ? getCollection(busResult.value)
-          .map(normalizeBus)
-          .filter((bus) => !bus.status || bus.status === 'AVAILABLE')
-      : []
-  drivers.value =
-    driverResult.status === 'fulfilled'
-      ? getCollection(driverResult.value)
-          // A locked driver cannot be assigned (task 1.2).
-          .filter((driver) => driver.active !== false)
-          .map(normalizeDriver)
-      : []
+    routes.value = (options.routes || []).map(normalizeRoute)
+    buses.value = (options.buses || [])
+      .map(normalizeBus)
+      .filter((bus) => bus.status !== 'MAINTENANCE')
+    drivers.value = (options.drivers || [])
+      // A locked driver cannot be assigned (task 1.2).
+      .filter((driver) => driver.active !== false)
+      .map(normalizeDriver)
 
-  if (
-    routeResult.status === 'rejected' ||
-    busResult.status === 'rejected' ||
-    driverResult.status === 'rejected'
-  ) {
+    // Aborted with the session (logout): nothing to report; the next open loads again.
+    if (failed && !options.canceled) {
+      optionsError.value =
+        'Some trip setup data is unavailable. Please retry before creating a trip.'
+    } else if (!failed && (!routes.value.length || !buses.value.length || !drivers.value.length)) {
+      optionsError.value =
+        'Routes, buses, or drivers are unavailable. Please add required resources first.'
+    }
+
+    // Only a complete load is cached; a failed one is retried the next time the wizard opens.
+    hasLoadedOptions.value = !failed
+  } catch {
     optionsError.value = 'Some trip setup data is unavailable. Please retry before creating a trip.'
-  } else if (!routes.value.length || !buses.value.length || !drivers.value.length) {
-    optionsError.value =
-      'Routes, buses, or drivers are unavailable. Please add required resources first.'
+  } finally {
+    optionsLoading.value = false
   }
-
-  hasLoadedOptions.value = true
-  optionsLoading.value = false
 }
 
 function clearErrors() {
@@ -281,44 +292,62 @@ function goNext() {
 function goBack() {
   if (!canNavigate.value || currentStepIndex.value === 0) return
 
-  clearErrors()
+  // Keep errors of earlier steps: a 400 from the BE on Review is shown on the step it belongs to.
+  STEP_FIELDS[currentStep.value]?.forEach((field) => delete errors[field])
+  submitError.value = ''
   currentStep.value = WIZARD_STEPS[Math.max(currentStepIndex.value - 1, 0)].key
 }
 
+// TripResponse times are "2030-01-01T08:00:00"; a datetime-local input wants "2030-01-01T08:00".
+function toInputDateTime(value) {
+  return value ? String(value).slice(0, 16) : ''
+}
+
 function resetForm() {
-  form.routeId = ''
-  form.busId = ''
-  form.driverId = ''
-  form.departureTime = ''
-  form.arrivalTime = ''
+  form.routeId = props.trip?.route?.id ?? ''
+  form.busId = props.trip?.bus?.id ?? ''
+  form.driverId = props.trip?.driver?.id ?? ''
+  form.departureTime = toInputDateTime(props.trip?.departureTime)
+  form.arrivalTime = toInputDateTime(props.trip?.arrivalTime)
   currentStep.value = 'route'
+  submitError.value = ''
   clearErrors()
 }
 
 function closeModal() {
+  if (creating.value) return
   resetForm()
   isOpen.value = false
 }
 
 async function submitTrip() {
   if (!validateAllSteps()) return
+  submitError.value = ''
+
+  // Status and revenue are set by the server (spec review 1.3 S3).
+  const payload = {
+    routeId: resolveOptionValue(routeOptions.value, form.routeId),
+    busId: resolveOptionValue(busOptions.value, form.busId),
+    driverId: resolveOptionValue(driverOptions.value, form.driverId),
+    departureTime: form.departureTime,
+    arrivalTime: form.arrivalTime,
+  }
 
   try {
-    const createdTrip = await tripStore.create({
-      routeId: resolveOptionValue(routeOptions.value, form.routeId),
-      busId: resolveOptionValue(busOptions.value, form.busId),
-      driverId: resolveOptionValue(driverOptions.value, form.driverId),
-      departureTime: form.departureTime,
-      arrivalTime: form.arrivalTime,
-      status: 'SCHEDULED',
-    })
+    const savedTrip = isEdit.value
+      ? await tripStore.update(props.trip.id, payload)
+      : await tripStore.create(payload)
 
-    toast.success('Trip created successfully')
-    resetForm()
+    toast.success(isEdit.value ? 'Trip updated successfully' : 'Trip created successfully')
     isOpen.value = false
-    emit('created', createdTrip)
+    emit('saved', savedTrip)
   } catch (err) {
-    toast.error(err?.message || 'Unable to create trip')
+    // Stay on Review with the data kept; "Back to Schedule" lets the admin fix it (design §4).
+    Object.entries(err?.errors ?? {}).forEach(([field, message]) => {
+      if (field in form) errors[field] = message
+    })
+    submitError.value = err?.message || 'Unable to save trip'
+    toast.error(submitError.value)
   }
 }
 
@@ -326,7 +355,7 @@ watch(
   () => props.modelValue,
   (open) => {
     if (open) {
-      currentStep.value = 'route'
+      resetForm()
       loadOptions()
     }
   },
@@ -349,7 +378,9 @@ watch(
               <UIcon name="i-heroicons-calendar-days" class="size-6" />
             </div>
             <div class="min-w-0">
-              <h2 class="text-2xl leading-8 font-bold text-zinc-900">Schedule New Trip</h2>
+              <h2 class="text-2xl leading-8 font-bold text-zinc-900">
+                {{ isEdit ? 'Edit Trip' : 'Schedule New Trip' }}
+              </h2>
               <p class="text-sm leading-5 font-medium text-gray-700">
                 Fluid Voyager Admin Terminal
               </p>
@@ -577,6 +608,14 @@ watch(
         </section>
 
         <section v-else class="flex flex-col gap-6">
+          <BaseEmptyState
+            v-if="submitError"
+            :title="submitError"
+            tone="danger"
+            role="alert"
+            class="text-left"
+            data-testid="submit-error"
+          />
           <div class="flex items-center justify-between gap-4">
             <h3 class="text-lg leading-7 font-bold text-zinc-900">Final Review</h3>
             <span
@@ -710,7 +749,7 @@ watch(
             Next
           </BaseButton>
           <BaseButton v-else html-type="submit" :loading="creating" :disabled="!canNavigate">
-            Schedule Trip
+            {{ isEdit ? 'Save Changes' : 'Schedule Trip' }}
             <template #icon-right>
               <UIcon name="i-heroicons-check" class="size-4" />
             </template>
