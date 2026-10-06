@@ -22,7 +22,9 @@ vi.mock('@/services/busRouteService', () => ({
 
 vi.mock('@/services/tripService', () => ({
   tripService: {
+    getAll: vi.fn(),
     create: vi.fn(),
+    update: vi.fn(),
   },
 }))
 
@@ -138,6 +140,8 @@ describe('ModalCreateTrip', () => {
             status: 'AVAILABLE',
           },
           { id: 99, busNumber: 'BUS-099', status: 'MAINTENANCE' },
+          // D1 = A (spec 1.3): a bus with another trip can still take a non-overlapping one.
+          { id: 98, busNumber: 'BUS-098', status: 'IN_USE' },
         ],
       },
     })
@@ -156,6 +160,8 @@ describe('ModalCreateTrip', () => {
         data: { id: 10 },
       },
     })
+    tripService.update.mockResolvedValue({ data: { data: { id: 5 } } })
+    tripService.getAll.mockResolvedValue({ data: { data: { content: [], totalElements: 0 } } })
   })
 
   it('renders wizard progress steps and starts on Route', async () => {
@@ -175,8 +181,9 @@ describe('ModalCreateTrip', () => {
     const wrapper = mountModal()
     await flushPromises()
 
-    expect(routeService.getAll).toHaveBeenCalledWith({ status: 'ACTIVE' })
-    expect(busService.getAll).toHaveBeenCalled()
+    // B31: the largest page the BE allows, not just the first default page.
+    expect(routeService.getAll).toHaveBeenCalledWith({ status: 'ACTIVE', size: 100 })
+    expect(busService.getAll).toHaveBeenCalledWith({ size: 100 })
     expect(userService.getAll).toHaveBeenCalledWith({ role: 'DRIVER', size: 100 })
     expect(wrapper.text()).toContain('Ha Noi - Hai Phong')
   })
@@ -201,6 +208,7 @@ describe('ModalCreateTrip', () => {
     expect(wrapper.text()).toContain('Assign the bus unit')
     expect(wrapper.text()).toContain('BUS-001 - 29A-12345')
     expect(wrapper.text()).not.toContain('BUS-099')
+    expect(wrapper.text()).toContain('BUS-098')
     expect(wrapper.text()).toContain('driver@example.com')
     // Locked drivers (task 1.2) are not offered.
     expect(wrapper.text()).not.toContain('locked.driver@example.com')
@@ -271,10 +279,9 @@ describe('ModalCreateTrip', () => {
       driverId: 3,
       departureTime: '2026-04-10T08:00',
       arrivalTime: '2026-04-10T10:30',
-      status: 'SCHEDULED',
     })
     expect(toast.success).toHaveBeenCalledWith('Trip created successfully')
-    expect(wrapper.emitted('created')?.[0]?.[0]).toEqual({ id: 10 })
+    expect(wrapper.emitted('saved')?.[0]?.[0]).toEqual({ id: 10 })
     expect(wrapper.emitted('update:modelValue')).toContainEqual([false])
   })
 
@@ -287,8 +294,11 @@ describe('ModalCreateTrip', () => {
     expect(wrapper.text()).toContain('Some trip setup data is unavailable')
   })
 
-  it('keeps the modal open on review when create fails', async () => {
-    tripService.create.mockRejectedValueOnce(new Error('Create failed'))
+  it('keeps the modal open on review with the BE message when create fails', async () => {
+    tripService.create.mockRejectedValueOnce({
+      status: 409,
+      message: 'Xe 29A-12345 đã có chuyến khác trong khung giờ này',
+    })
     const wrapper = mountModal()
     await flushPromises()
 
@@ -296,9 +306,150 @@ describe('ModalCreateTrip', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(toast.error).toHaveBeenCalledWith('Create failed')
+    expect(toast.error).toHaveBeenCalledWith('Xe 29A-12345 đã có chuyến khác trong khung giờ này')
+    expect(wrapper.get('[data-testid="submit-error"]').text()).toContain('đã có chuyến khác')
     expect(wrapper.text()).toContain('Final Review')
-    expect(wrapper.emitted('created')).toBeUndefined()
+    expect(wrapper.emitted('saved')).toBeUndefined()
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('Back to Schedule after a refusal keeps the entered data and clears the error', async () => {
+    tripService.create.mockRejectedValueOnce({
+      status: 400,
+      message: 'Giờ khởi hành không được ở quá khứ',
+    })
+    const wrapper = mountModal()
+    await flushPromises()
+    await advanceToReview(wrapper)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    await getButton(wrapper, 'Back to Schedule').trigger('click')
+    await flushPromises()
+
+    const inputs = wrapper.findAll('input')
+    expect(inputs[0].element.value).toBe('2026-04-10T08:00')
+    expect(inputs[1].element.value).toBe('2026-04-10T10:30')
+    expect(wrapper.find('[data-testid="submit-error"]').exists()).toBe(false)
+  })
+
+  it('a BE field error survives Back to Schedule and shows next to its input', async () => {
+    tripService.create.mockRejectedValueOnce({
+      status: 400,
+      message: 'Giờ khởi hành không được ở quá khứ',
+      errors: { departureTime: 'Giờ khởi hành không được ở quá khứ' },
+    })
+    const wrapper = mountModal()
+    await flushPromises()
+    await advanceToReview(wrapper)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    await getButton(wrapper, 'Back to Schedule').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Set the departure')
+    expect(wrapper.text()).toContain('Giờ khởi hành không được ở quá khứ')
+  })
+
+  it('cannot be closed or reset while saving', async () => {
+    let resolve
+    tripService.create.mockReturnValueOnce(new Promise((r) => (resolve = r)))
+    const wrapper = mountModal()
+    await flushPromises()
+    await advanceToReview(wrapper)
+    await wrapper.get('form').trigger('submit')
+
+    await wrapper.get('[aria-label="Close create trip modal"]').trigger('click')
+
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    expect(wrapper.text()).toContain('Final Review')
+    resolve({ data: { data: { id: 10 } } })
+    await flushPromises()
+  })
+
+  it('a load aborted by logout shows no error and is retried next time (B37 d)', async () => {
+    routeService.getAll.mockRejectedValueOnce({ name: 'CanceledError', code: 'ERR_CANCELED' })
+    const wrapper = mountModal()
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Some trip setup data is unavailable')
+
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+    expect(routeService.getAll).toHaveBeenCalledTimes(2)
+  })
+
+  it('a complete load is cached across reopenings', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+
+    expect(routeService.getAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('reloads the options next time when a load failed', async () => {
+    routeService.getAll.mockRejectedValueOnce(new Error('Routes unavailable'))
+    const wrapper = mountModal()
+    await flushPromises()
+    await wrapper.setProps({ modelValue: false })
+    await wrapper.setProps({ modelValue: true })
+    await flushPromises()
+
+    expect(routeService.getAll).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).not.toContain('Some trip setup data is unavailable')
+  })
+
+  describe('edit mode', () => {
+    const trip = {
+      id: 5,
+      status: 'SCHEDULED',
+      departureTime: '2026-04-11T07:00:00',
+      arrivalTime: '2026-04-11T09:15:00',
+      route: { id: 1, routeName: 'Ha Noi - Hai Phong' },
+      bus: { id: 2, plateNumber: '29A-12345', capacity: 40 },
+      driver: { id: 3, email: 'driver@example.com' },
+    }
+
+    it('keeps the current bus visible as unavailable when it is no longer offered', async () => {
+      const wrapper = mountModal({
+        trip: { ...trip, bus: { id: 99, plateNumber: 'BUS-099', capacity: 40 } },
+      })
+      await flushPromises()
+      await getButton(wrapper, 'Next').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('(unavailable)')
+      expect(wrapper.findAll('select')[0].element.value).toBe('99')
+    })
+
+    it('prefills every step from the trip and sends PUT without status', async () => {
+      const wrapper = mountModal({ trip })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Edit Trip')
+      for (let step = 0; step < 3; step += 1) {
+        await getButton(wrapper, 'Next').trigger('click')
+        await flushPromises()
+      }
+      expect(wrapper.text()).toContain('Final Review')
+      expect(wrapper.text()).toContain('Save Changes')
+
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+
+      expect(tripService.update).toHaveBeenCalledWith(5, {
+        routeId: 1,
+        busId: 2,
+        driverId: 3,
+        departureTime: '2026-04-11T07:00',
+        arrivalTime: '2026-04-11T09:15',
+      })
+      expect(tripService.create).not.toHaveBeenCalled()
+      expect(toast.success).toHaveBeenCalledWith('Trip updated successfully')
+    })
   })
 })

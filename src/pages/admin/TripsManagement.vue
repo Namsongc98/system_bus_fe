@@ -1,115 +1,108 @@
 <script setup>
 // TripsManagement — /admin/trips
 import { computed, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import ModalCreateTrip from '@/components/common/Modal/ModalCreateTrip.vue'
+import ModalDeleteConfirm from '@/components/common/Modal/ModalDeleteConfirm.vue'
 import ModalTripDetails from '@/components/common/Modal/ModalTripDetails.vue'
 import TripHighlightCard from '@/components/common/TripHighlightCard.vue'
 import TripsCalendarGrid from '@/components/common/TripsCalendarGrid.vue'
 import TripsListTable from '@/components/common/TripsListTable.vue'
 import BaseButton from '@/components/elements/BaseButton.vue'
 import BaseEmptyState from '@/components/elements/BaseEmptyState.vue'
+import BasePagination from '@/components/elements/BasePagination.vue'
 import BaseSortFilter from '@/components/elements/BaseSortFilter.vue'
 import BaseTabs from '@/components/elements/BaseTabs.vue'
 import {
-  TRIPS_MANAGEMENT_BUS_TYPE_OPTIONS,
-  TRIPS_MANAGEMENT_FALLBACK_TRIPS,
-  TRIPS_MANAGEMENT_ROUTE_OPTIONS,
+  TRIPS_MANAGEMENT_ALL_ROUTES_OPTION,
   TRIPS_MANAGEMENT_STATUS_OPTIONS,
   TRIPS_MANAGEMENT_VIEW_TABS,
 } from '@/constants/admin/tripsManagement'
-import { tripService } from '@/services/tripService'
+import { TRIP_CALENDAR_LIMIT, useTripStore } from '@/stores/trip'
+import { toTripView } from '@/utils/tripView'
+
+const tripStore = useTripStore()
+const {
+  trips,
+  page,
+  loading,
+  error,
+  calendarTrips,
+  calendarTotal,
+  calendarLoading,
+  calendarError,
+  highlights,
+  routeOptions,
+} = storeToRefs(tripStore)
 
 const selectedView = ref('calendar')
 const statusFilter = ref('all')
 const routeFilter = ref('all')
-const busTypeFilter = ref('all')
-const trips = ref(TRIPS_MANAGEMENT_FALLBACK_TRIPS)
-const loading = ref(false)
-const warning = ref('')
-const isCreateTripOpen = ref(false)
+
+const isTripFormOpen = ref(false)
+const editingTrip = ref(null)
 const isTripDetailsOpen = ref(false)
 const selectedTrip = ref(null)
+const isDeleteOpen = ref(false)
+const deletingTrip = ref(null)
 
-const filteredTrips = computed(() =>
-  trips.value.filter((trip) => {
-    const statusMatch = statusFilter.value === 'all' || trip.status === statusFilter.value
-    const routeMatch = routeFilter.value === 'all' || trip.routeShort === routeFilter.value
-    const busMatch = busTypeFilter.value === 'all' || trip.busType === busTypeFilter.value
-    return statusMatch && routeMatch && busMatch
-  })
-)
+const routeFilterOptions = computed(() => [
+  TRIPS_MANAGEMENT_ALL_ROUTES_OPTION,
+  ...routeOptions.value,
+])
+const listRows = computed(() => trips.value.map(toTripView))
+const calendarRows = computed(() => calendarTrips.value.map(toTripView))
+const highlightRows = computed(() => highlights.value.map(toTripView))
+const calendarCapped = computed(() => calendarTotal.value > TRIP_CALENDAR_LIMIT)
 
-const highlightTrips = computed(() => filteredTrips.value.slice(0, 2))
-function firstDefined(...values) {
-  return values.find((value) => value !== undefined && value !== null && value !== '')
-}
+// The loading / error block replaces the list only when there is nothing to show yet (1.1 L3).
+const showListLoading = computed(() => loading.value && !listRows.value.length)
+const showListEmpty = computed(() => !loading.value && !error.value && !listRows.value.length)
 
-function getPayload(response) {
-  return response?.data?.data ?? response?.data ?? response
-}
-
-function getCollection(response) {
-  const payload = getPayload(response)
-  if (Array.isArray(payload)) return payload
-  if (Array.isArray(payload?.content)) return payload.content
-  if (Array.isArray(payload?.items)) return payload.items
-  if (Array.isArray(payload?.data)) return payload.data
-  return []
-}
-
-function normalizeStatus(value) {
-  const status = String(value || '').toLowerCase()
-  if (status.includes('ongoing') || status.includes('running')) return 'ongoing'
-  if (status.includes('complete') || status.includes('done')) return 'completed'
-  if (status.includes('cancel')) return 'cancelled'
-  return 'scheduled'
-}
-
-function normalizeTrip(trip, index) {
-  const code = firstDefined(trip.code, trip.tripCode, trip.id, `#TR-${index + 1}`)
-  const from = firstDefined(trip.from, trip.origin, trip.departure, trip.route?.from, 'Origin')
-  const to = firstDefined(trip.to, trip.destination, trip.arrival, trip.route?.to, 'Destination')
-  const status = normalizeStatus(firstDefined(trip.status, trip.state))
-  const capacity = Number(firstDefined(trip.capacity, trip.totalSeats, trip.seats, 50))
-  const booked = Number(firstDefined(trip.booked, trip.bookedSeats, trip.occupiedSeats, 0))
-  const loadFactor = capacity ? Math.round((booked / capacity) * 100) : 0
-  const bus = firstDefined(trip.busName, trip.bus?.name, trip.bus?.plateNumber, trip.busCode, 'Bus')
-
+function currentFilters() {
   return {
-    id: firstDefined(trip.id, code, index),
-    code: String(code).startsWith('#') ? String(code) : `#${code}`,
-    shortId: String(code).replace('#', '').slice(0, 6) + '…',
-    route: `${from} ➔ ${to}`,
-    routeShort: firstDefined(
-      trip.routeShort,
-      `${String(from).slice(0, 3).toUpperCase()} ➔ ${String(to).slice(0, 3).toUpperCase()}`
-    ),
-    timeRange: firstDefined(
-      trip.timeRange,
-      `${trip.departureTime || '08:00 AM'} - ${trip.arrivalTime || '12:30 PM'}`
-    ),
-    departureTime: firstDefined(trip.departureTime, trip.departureDateTime, trip.startTime),
-    arrivalTime: firstDefined(trip.arrivalTime, trip.arrivalDateTime, trip.endTime),
-    operator: firstDefined(
-      trip.driverName,
-      trip.operator,
-      trip.driver?.name,
-      'Unassigned operator'
-    ),
-    operatorShort: firstDefined(trip.operatorShort, trip.driverName, trip.operator, 'Operator'),
-    bus: firstDefined(trip.busLabel, bus),
-    busShort: String(bus),
-    busType: firstDefined(trip.busType, trip.bus?.type, trip.type, 'Luxury'),
-    booked,
-    capacity,
-    loadFactor: firstDefined(trip.loadFactor, loadFactor),
-    status,
-    statusLabel: status.charAt(0).toUpperCase() + status.slice(1),
+    status: statusFilter.value === 'all' ? null : statusFilter.value,
+    routeId: routeFilter.value === 'all' ? null : routeFilter.value,
   }
 }
 
-function openCreateTripModal() {
-  isCreateTripOpen.value = true
+// Filters are applied on the server to the list and to the calendar range.
+function reloadForFilters() {
+  tripStore.applyFilters(currentFilters())
+  return Promise.all([tripStore.fetchAll({ page: 0 }), tripStore.fetchCalendar()])
+}
+
+function onStatusFilter(value) {
+  statusFilter.value = value
+  reloadForFilters()
+}
+
+function onRouteFilter(value) {
+  routeFilter.value = value
+  reloadForFilters()
+}
+
+function onCalendarRange(range) {
+  tripStore.fetchCalendar(range)
+}
+
+function loadList(pageNumber) {
+  return tripStore.fetchAll({ page: pageNumber })
+}
+
+function showAllScheduled() {
+  selectedView.value = 'list'
+  onStatusFilter('SCHEDULED')
+}
+
+function openCreateTrip() {
+  editingTrip.value = null
+  isTripFormOpen.value = true
+}
+
+function openEditTrip(rawTrip) {
+  editingTrip.value = rawTrip
+  isTripFormOpen.value = true
 }
 
 function openTripDetails(trip) {
@@ -117,28 +110,20 @@ function openTripDetails(trip) {
   isTripDetailsOpen.value = true
 }
 
-async function fetchTrips() {
-  loading.value = true
-  warning.value = ''
-
-  try {
-    const response = await tripService.getAll()
-    const records = getCollection(response)
-    if (records.length) {
-      trips.value = records.map(normalizeTrip)
-    } else {
-      trips.value = TRIPS_MANAGEMENT_FALLBACK_TRIPS
-      warning.value = 'Trip API returned no records. Showing sample trip management data.'
-    }
-  } catch (err) {
-    trips.value = TRIPS_MANAGEMENT_FALLBACK_TRIPS
-    warning.value = err?.message || 'Unable to load trips. Showing sample trip management data.'
-  } finally {
-    loading.value = false
-  }
+function openDeleteTrip(trip) {
+  deletingTrip.value = trip
+  isDeleteOpen.value = true
 }
 
-onMounted(fetchTrips)
+onMounted(() => {
+  tripStore.applyFilters(currentFilters())
+  // The calendar loads its own range when it renders (range-change).
+  return Promise.all([
+    tripStore.fetchRouteOptions(),
+    tripStore.fetchAll({ page: 0 }),
+    tripStore.fetchHighlights(),
+  ])
+})
 </script>
 
 <template>
@@ -155,11 +140,10 @@ onMounted(fetchTrips)
         <BaseTabs
           :model-value="selectedView"
           :options="TRIPS_MANAGEMENT_VIEW_TABS"
-          :disabled="loading"
           aria-label="Trips view mode"
           @update:model-value="selectedView = $event"
         />
-        <BaseButton size="md" html-type="button" @click="openCreateTripModal">
+        <BaseButton size="md" html-type="button" @click="openCreateTrip">
           <template #icon-left>
             <span class="size-2.5 rounded-full bg-white"></span>
           </template>
@@ -172,62 +156,135 @@ onMounted(fetchTrips)
       class="flex flex-col gap-3 rounded-2xl bg-white/70 p-4 shadow-sm outline outline-1 outline-offset-[-1px] outline-slate-300/10 backdrop-blur-md lg:flex-row lg:items-center"
     >
       <BaseSortFilter
-        v-model="statusFilter"
+        :model-value="statusFilter"
         :options="TRIPS_MANAGEMENT_STATUS_OPTIONS"
         label="Status"
-        :disabled="loading"
+        @update:model-value="onStatusFilter"
       />
       <BaseSortFilter
-        v-model="routeFilter"
-        :options="TRIPS_MANAGEMENT_ROUTE_OPTIONS"
+        :model-value="routeFilter"
+        :options="routeFilterOptions"
         label="Route"
-        :disabled="loading"
-      />
-      <BaseSortFilter
-        v-model="busTypeFilter"
-        :options="TRIPS_MANAGEMENT_BUS_TYPE_OPTIONS"
-        label="Bus Type"
-        :disabled="loading"
+        @update:model-value="onRouteFilter"
       />
     </section>
 
-    <BaseEmptyState v-if="warning" :title="warning" tone="warning" class="text-left" />
-
-    <section
-      v-if="loading"
-      class="rounded-2xl bg-white/70 p-5 text-sm font-semibold text-sky-700 shadow-sm"
-    >
-      Loading trips...
-    </section>
-
-    <TripsCalendarGrid
-      v-if="selectedView === 'calendar'"
-      :trips="filteredTrips"
-      @trip-click="openTripDetails"
-    />
-
-    <section
-      class="rounded-2xl bg-white/70 p-6 shadow-sm outline outline-1 outline-offset-[-1px] outline-slate-300/10 backdrop-blur-md"
-    >
-      <header class="flex items-center justify-between">
-        <h2 class="text-lg leading-7 font-bold text-zinc-900">Upcoming Highlights</h2>
+    <template v-if="selectedView === 'calendar'">
+      <div
+        v-if="calendarError"
+        role="alert"
+        class="flex flex-col gap-3"
+        data-testid="calendar-error"
+      >
+        <BaseEmptyState :title="calendarError" tone="danger" class="text-left" />
         <BaseButton
-          unstyled
-          html-type="button"
-          class="text-sm leading-5 font-semibold text-sky-700 hover:text-sky-900"
-        >
-          View All
-        </BaseButton>
-      </header>
-
-      <div class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-        <TripHighlightCard v-for="trip in highlightTrips" :key="trip.id" :trip="trip" />
+          label="Retry"
+          type="outline"
+          size="sm"
+          class="self-center"
+          @click="tripStore.fetchCalendar()"
+        />
       </div>
-    </section>
+      <BaseEmptyState
+        v-if="calendarCapped"
+        :title="`Showing the first ${TRIP_CALENDAR_LIMIT} of ${calendarTotal} trips in this range. Narrow the filters or use List View.`"
+        tone="warning"
+        class="text-left"
+        data-testid="calendar-capped"
+      />
+      <TripsCalendarGrid
+        :trips="calendarRows"
+        :aria-busy="calendarLoading"
+        @trip-click="openTripDetails"
+        @range-change="onCalendarRange"
+      />
 
-    <TripsListTable :trips="filteredTrips.slice(0, 2)" />
+      <section
+        class="rounded-2xl bg-white/70 p-6 shadow-sm outline outline-1 outline-offset-[-1px] outline-slate-300/10 backdrop-blur-md"
+      >
+        <header class="flex items-center justify-between">
+          <h2 class="text-lg leading-7 font-bold text-zinc-900">Upcoming Highlights</h2>
+          <BaseButton
+            unstyled
+            html-type="button"
+            class="text-sm leading-5 font-semibold text-sky-700 hover:text-sky-900"
+            @click="showAllScheduled"
+          >
+            View All
+          </BaseButton>
+        </header>
 
-    <ModalCreateTrip v-model="isCreateTripOpen" @created="fetchTrips" />
-    <ModalTripDetails v-model="isTripDetailsOpen" :trip="selectedTrip" />
+        <div v-if="highlightRows.length" class="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <TripHighlightCard v-for="trip in highlightRows" :key="trip.id" :trip="trip" />
+        </div>
+        <p v-else class="mt-6 text-sm text-gray-600" data-testid="highlights-empty">
+          No upcoming scheduled trips.
+        </p>
+      </section>
+    </template>
+
+    <template v-else>
+      <div
+        v-if="showListLoading"
+        role="status"
+        class="rounded-2xl bg-white/70 p-5 text-sm font-semibold text-sky-700 shadow-sm"
+        data-testid="trips-loading"
+      >
+        Loading trips...
+      </div>
+
+      <div v-if="error" role="alert" class="flex flex-col gap-3" data-testid="trips-error">
+        <BaseEmptyState :title="error" tone="danger" class="text-left" />
+        <BaseButton
+          label="Retry"
+          type="outline"
+          size="sm"
+          class="self-center"
+          @click="loadList(tripStore.requestedPage)"
+        />
+      </div>
+
+      <BaseEmptyState
+        v-if="showListEmpty"
+        title="No trips match these filters"
+        description="Create a trip with New Trip, or change the status / route filter."
+        data-testid="trips-empty"
+      />
+
+      <TripsListTable
+        v-if="listRows.length"
+        :trips="listRows"
+        :total="page.totalElements"
+        :aria-busy="loading"
+        @open="openTripDetails"
+      >
+        <template #pagination>
+          <BasePagination
+            v-if="page.totalPages > 1"
+            :page="page.page"
+            :total-pages="page.totalPages"
+            :has-prev-page="page.page > 0"
+            :has-next-page="page.page + 1 < page.totalPages"
+            :loading="loading"
+            @prev="loadList(page.page - 1)"
+            @next="loadList(page.page + 1)"
+          />
+        </template>
+      </TripsListTable>
+    </template>
+
+    <ModalCreateTrip v-model="isTripFormOpen" :trip="editingTrip" />
+    <ModalTripDetails
+      v-model="isTripDetailsOpen"
+      :trip="selectedTrip"
+      @edit="openEditTrip"
+      @delete="openDeleteTrip"
+    />
+    <ModalDeleteConfirm
+      v-model="isDeleteOpen"
+      entity-type="trip"
+      :entity-name="deletingTrip?.code ?? ''"
+      :on-confirm="() => tripStore.remove(deletingTrip.id)"
+    />
   </div>
 </template>

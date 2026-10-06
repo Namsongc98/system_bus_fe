@@ -2,14 +2,20 @@
 import BaseButton from '@/components/elements/BaseButton.vue'
 
 defineProps({
+  // Trips mapped by toTripView (utils/tripView.js).
   trips: { type: Array, default: () => [] },
+  // Total trips matching the filter (all pages).
+  total: { type: Number, default: 0 },
 })
+
+const emit = defineEmits(['open'])
 
 function statusClass(status) {
   const classes = {
     scheduled: 'bg-sky-500/10 text-sky-500',
     ongoing: 'bg-emerald-500/10 text-emerald-800',
     completed: 'bg-zinc-300/20 text-gray-700',
+    cancelled: 'bg-rose-500/10 text-rose-700',
   }
 
   return classes[status] || classes.scheduled
@@ -24,16 +30,24 @@ function statusClass(status) {
       <table class="w-full min-w-[920px] text-left">
         <thead class="border-b border-slate-300/10 bg-stone-100">
           <tr>
-            <th class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">Trip ID</th>
-            <th class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">
+            <th scope="col" class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">
+              Trip ID
+            </th>
+            <th scope="col" class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">
               Route / Times
             </th>
-            <th class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">
+            <th scope="col" class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">
               Operator / Bus
             </th>
-            <th class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">Capacity</th>
-            <th class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">Status</th>
-            <th class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">Actions</th>
+            <th scope="col" class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">
+              Capacity
+            </th>
+            <th scope="col" class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">
+              Status
+            </th>
+            <th scope="col" class="px-6 py-4 text-xs leading-4 font-bold text-gray-700 uppercase">
+              Actions
+            </th>
           </tr>
         </thead>
 
@@ -87,6 +101,7 @@ function statusClass(status) {
                 html-type="button"
                 :aria-label="`Open actions for ${trip.code}`"
                 class="flex size-8 items-center justify-center rounded-full text-gray-700 hover:bg-stone-100"
+                @click="emit('open', trip)"
               >
                 <span class="h-4 w-1 rounded-full bg-current"></span>
               </BaseButton>
@@ -100,12 +115,10 @@ function statusClass(status) {
       class="flex flex-col gap-3 bg-stone-100/50 p-4 sm:flex-row sm:items-center sm:justify-between"
     >
       <p class="text-xs leading-4 font-medium text-gray-700">
-        Showing {{ trips.length }} of 24 active trips
+        Showing {{ trips.length }} of {{ total }} trips
       </p>
-      <div class="flex gap-2">
-        <BaseButton label="Previous" type="outline" size="sm" html-type="button" />
-        <BaseButton label="Next" type="outline" size="sm" html-type="button" />
-      </div>
+      <!-- Paging controls (BasePagination) are provided by the page. -->
+      <slot name="pagination" />
     </footer>
   </section>
 </template>

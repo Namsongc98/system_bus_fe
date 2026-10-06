@@ -37,10 +37,10 @@ export const API_ENDPOINTS = Object.freeze({
   },
 
   TRIPS: {
-    BASE: '/trip', // POST ✓ TripController.java:26 · GET list BE: missing (1.3)
-    BY_ID: (id) => `/trip/${id}`, // PUT ✓ TripController.java:45 · GET, DELETE BE: missing (1.3)
+    BASE: '/trip', // GET ✓ TripController.java:32 (?status&routeId&busId&driverId&from&to&page&size), POST ✓ :53
+    BY_ID: (id) => `/trip/${id}`, // GET ✓ TripController.java:47, PUT ✓ :60, DELETE ✓ :75
+    STATUS: (id) => `/trip/${id}/status`, // PATCH ✓ TripController.java:67
     SEARCH: '/trips/search', // GET BE: missing (2.1)
-    COMPLETE: (id) => `/trips/${id}/complete`, // PUT BE: missing (1.3)
   },
 
   SEATS: {

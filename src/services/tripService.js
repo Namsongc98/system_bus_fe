@@ -1,10 +1,8 @@
 import apiClient from './axios'
 import { API_ENDPOINTS } from '@/constants/api_endpoint'
 
+// Admin trip management (/api/trip, ADMIN only, task 1.3).
 export const tripService = {
-  search(params) {
-    return apiClient.get(API_ENDPOINTS.TRIPS.SEARCH, { params })
-  },
   getAll(params) {
     return apiClient.get(API_ENDPOINTS.TRIPS.BASE, { params })
   },
@@ -17,10 +15,14 @@ export const tripService = {
   update(id, payload) {
     return apiClient.put(API_ENDPOINTS.TRIPS.BY_ID(id), payload)
   },
-  complete(id) {
-    return apiClient.put(API_ENDPOINTS.TRIPS.COMPLETE(id))
+  updateStatus(id, status) {
+    return apiClient.patch(API_ENDPOINTS.TRIPS.STATUS(id), { status })
   },
   remove(id) {
     return apiClient.delete(API_ENDPOINTS.TRIPS.BY_ID(id))
+  },
+  // Customer trip search — BE: missing (2.1).
+  search(params) {
+    return apiClient.get(API_ENDPOINTS.TRIPS.SEARCH, { params })
   },
 }

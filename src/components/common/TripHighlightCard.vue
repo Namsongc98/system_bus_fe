@@ -3,8 +3,15 @@ const props = defineProps({
   trip: { type: Object, required: true },
 })
 
+const STATUS_CLASSES = {
+  scheduled: 'bg-sky-500 text-white',
+  ongoing: 'bg-emerald-500 text-white',
+  completed: 'bg-zinc-400 text-white',
+  cancelled: 'bg-rose-500 text-white',
+}
+
 function statusClass(status) {
-  return status === 'ongoing' ? 'bg-emerald-500 text-white' : 'bg-sky-500 text-white'
+  return STATUS_CLASSES[status] || STATUS_CLASSES.scheduled
 }
 </script>
 

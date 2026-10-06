@@ -13,6 +13,13 @@ describe('API_ENDPOINTS match existing BE paths', () => {
     expect(API_ENDPOINTS.SALARY.BASE_SALARY).toBe('/base_salary')
   })
 
+  it('points the trip endpoints at TripController (1.3)', () => {
+    expect(API_ENDPOINTS.TRIPS.BASE).toBe('/trip')
+    expect(API_ENDPOINTS.TRIPS.BY_ID(5)).toBe('/trip/5')
+    expect(API_ENDPOINTS.TRIPS.STATUS(5)).toBe('/trip/5/status')
+    expect(API_ENDPOINTS.TRIPS).not.toHaveProperty('COMPLETE')
+  })
+
   it('points the admin user endpoints at UserController (1.2), with no delete', () => {
     expect(API_ENDPOINTS.USERS.BASE).toBe('/user')
     expect(API_ENDPOINTS.USERS.COUNTS).toBe('/user/counts')

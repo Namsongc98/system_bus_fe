@@ -7,7 +7,8 @@ const props = defineProps({
   trips: { type: Array, default: () => [] },
 })
 
-const emit = defineEmits(['trip-click'])
+// range-change: { from, to } Dates of the visible range, so the page loads its trips (spec 1.3 D7).
+const emit = defineEmits(['trip-click', 'range-change'])
 
 const statusClasses = {
   scheduled: 'trip-event--scheduled',
@@ -60,9 +61,12 @@ const calendarOptions = computed(() => ({
   },
   events: calendarEvents.value,
   displayEventTime: false,
+  // Events open the details modal on click only; make them focusable / Enter-activatable too.
+  eventInteractive: true,
   dayMaxEvents: 3,
   fixedWeekCount: false,
   eventClick: ({ event }) => emit('trip-click', event.extendedProps.trip),
+  datesSet: ({ start, end }) => emit('range-change', { from: start, to: end }),
 }))
 </script>
 
@@ -90,6 +94,7 @@ const calendarOptions = computed(() => ({
       <template #eventContent="{ event }">
         <span class="block truncate px-1.5 py-0.5 text-[11px] font-bold">
           {{ event.title }}
+          <span class="sr-only">— {{ event.extendedProps.trip?.statusLabel }}</span>
         </span>
       </template>
     </FullCalendar>

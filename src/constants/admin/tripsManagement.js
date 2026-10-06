@@ -3,13 +3,31 @@ export const TRIPS_MANAGEMENT_VIEW_TABS = [
   { label: 'List View', value: 'list' },
 ]
 
+// Values are BE TripStatus names (sent as `status`); 'all' sends no status filter.
 export const TRIPS_MANAGEMENT_STATUS_OPTIONS = [
   { label: 'All Statuses', value: 'all' },
-  { label: 'Scheduled', value: 'scheduled' },
-  { label: 'Ongoing', value: 'ongoing' },
-  { label: 'Completed', value: 'completed' },
+  { label: 'Scheduled', value: 'SCHEDULED' },
+  { label: 'Ongoing', value: 'ONGOING' },
+  { label: 'Completed', value: 'COMPLETED' },
+  { label: 'Cancelled', value: 'CANCELLED' },
 ]
 
+// First option of the route filter; the rest come from GET /api/route (task 1.3).
+export const TRIPS_MANAGEMENT_ALL_ROUTES_OPTION = { label: 'All Routes', value: 'all' }
+
+// Status actions offered in the trip details modal (plan §1.3 state machine).
+export const TRIPS_MANAGEMENT_STATUS_ACTIONS = {
+  SCHEDULED: [
+    { status: 'ONGOING', label: 'Start trip', icon: 'i-heroicons-play' },
+    { status: 'CANCELLED', label: 'Cancel trip', icon: 'i-heroicons-x-circle', confirm: true },
+  ],
+  ONGOING: [{ status: 'COMPLETED', label: 'Complete trip', icon: 'i-heroicons-check-circle' }],
+  COMPLETED: [],
+  CANCELLED: [],
+}
+
+// Sample options from the first UI pass. No longer rendered (routes come from the API, "Bus Type"
+// has no BE field — spec review 1.3 D7). Kept because fallback constants are not deleted.
 export const TRIPS_MANAGEMENT_ROUTE_OPTIONS = [
   { label: 'All Routes', value: 'all' },
   { label: 'NYC to DC', value: 'NYC ➔ DC' },
@@ -22,6 +40,8 @@ export const TRIPS_MANAGEMENT_BUS_TYPE_OPTIONS = [
   { label: 'Sleeper', value: 'Sleeper' },
 ]
 
+// Sample data from the first UI pass. No longer rendered: the page shows real data or an
+// empty/error state (task 1.3). Kept only because fallback constants are not deleted.
 export const TRIPS_MANAGEMENT_FALLBACK_TRIPS = [
   {
     id: 'tr-2045',

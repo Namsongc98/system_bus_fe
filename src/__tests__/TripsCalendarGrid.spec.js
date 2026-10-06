@@ -75,6 +75,25 @@ describe('TripsCalendarGrid', () => {
     expect(wrapper.emitted('trip-click')).toEqual([[trips[0]]])
   })
 
+  it('makes events keyboard-reachable (frontend review 1.3 #1)', () => {
+    const wrapper = mount(TripsCalendarGrid, { props: { trips } })
+
+    expect(wrapper.getComponent({ name: 'FullCalendar' }).props('options').eventInteractive).toBe(
+      true
+    )
+  })
+
+  it('reports the visible range so the page can load its trips (spec 1.3 D7)', () => {
+    const wrapper = mount(TripsCalendarGrid, { props: { trips } })
+    const options = wrapper.getComponent({ name: 'FullCalendar' }).props('options')
+    const start = new Date(2026, 5, 1)
+    const end = new Date(2026, 6, 6)
+
+    options.datesSet({ start, end })
+
+    expect(wrapper.emitted('range-change')).toEqual([[{ from: start, to: end }]])
+  })
+
   it('omits an invalid arrival time while retaining a valid departure', () => {
     const wrapper = mount(TripsCalendarGrid, {
       props: {
