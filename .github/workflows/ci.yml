@@ -1,0 +1,35 @@
+# CI frontend (task 6.2, H9 — chỉ FE; CI backend ở task 6.2b): test + build trên mỗi PR
+# và push vào main/develop. Job `build-test` là required check của branch protection develop + main.
+# CD do Cloudflare Pages đảm nhận (Git integration): preview deploy mỗi PR, production khi merge main.
+# Workflow này chỉ chặn code lỗi trước khi Pages build — không deploy gì.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+# Push mới lên cùng PR huỷ lần chạy cũ đang dở; push vào main/develop chạy đủ để mỗi commit có kết quả
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15                   # test + build local ~1 phút; treo lâu hơn là lỗi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22                # khớp engines: ^20.19.0 || >=22.12.0
+          cache: npm
+      - run: npm ci                       # cài đúng theo package-lock.json
+      - run: npm run test:unit -- --run   # --run: chạy 1 lần, không vào watch mode
+      - run: npm run build
+        env:
+          # Chỉ để bundle có giá trị hợp lệ; URL thật đặt trong biến môi trường của Cloudflare Pages, không lấy từ CI
+          VITE_KONG_API_URL: https://api.example.com/api
